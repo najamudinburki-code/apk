@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- In AndroidManifest.xml, declare .AccessibilityHelperService with:
+     android:exported="true"
+     android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+     intent-filter action="android.accessibilityservice.AccessibilityService"
+     meta-data android:name="android.accessibilityservice"
+               android:resource="@xml/accessibility_service_config"
+     Notification status requires the POST_NOTIFICATIONS manifest/runtime permission. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewTextChanged|typeViewScrolled"
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:canRetrieveWindowContent="true"
+    android:notificationTimeout="0" />

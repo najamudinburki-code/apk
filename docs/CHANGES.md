@@ -62,3 +62,32 @@ The default invitation needs no new Render environment variable. Anyone given th
 The dashboard now explains automatic connection and refreshes its device roster when an enrollment changes, so new phones appear immediately. All existing tool panels and legacy approval/decline controls remain. Android permissions, screen/notification sharing disclosure, visible notifications, password redaction, per-action sensor controls and Stop remain. No previous Kotlin file or function name was removed.
 
 VersionCode is 5, versionName 0.3.1. Health reports api_version 4 and automatic_enrollment. Twenty-eight backend checks pass in each storage test setup; Android build/lint/six unit checks and dashboard build/browser checks pass. The matching backend/dashboard bundle still needs one deployment to the user's existing Render services.
+
+## 0.3.2 — permission checklist and quieter visible notifications
+
+Added an optional PermissionSetupActivity that opens once on first launch after this update and can be reopened from the main app. The user chooses camera, microphone, foreground location, nearby Bluetooth and status-notification permissions to prepare. Already granted permissions are skipped; denied or skipped permissions do not cause repeated automatic prompts. The permission queue and checkbox selection survive activity recreation. Background location is separate; accessibility/notification access remain Android settings choices; screen sharing still uses per-capture Android consent. Setup does not start any capture, reader or location sharing.
+
+Added a visible, silent notification group with a summary naming the active statuses. Every foreground service retains its own notice and existing controls. Request notifications now use a quiet default channel with no sound, vibration or badge; stable request IDs prevent reordered/retried lists from reposting the same notice. Counts update when requests arrive or are completed. Existing channel choices remain user-controlled.
+
+MainActivity retains Start, Stop, manual connection settings, all tools and both app-selection modes. Sensitive dashboard commands still wait for phone review. Health and already approved uploads remain automatic. No backend or dashboard changes are needed if API version 4 is already deployed.
+
+VersionCode 6, versionName 0.3.2. All 23 previous active Kotlin files and their existing function names remain; four new Kotlin implementation files and two test files were added. Physical Android/OEM permission and notification behavior still needs a phone check.
+
+
+## 0.4.0 — front camera, guided setup, readiness and simpler installation
+
+- CameraController keeps the original capturePhoto entry point and adds explicit lens selection. Front is the default; a remembered Front/Rear selector retains the rear-camera tool. Missing chosen cameras report an error rather than silently capturing from another lens. Consent and reviewed dashboard photo requests identify the chosen lens. Camera permission, visible activity, cancellation, orientation, timeout and upload controls remain.
+- PermissionSetupActivity now has Connect, Permissions and Check stages. Automatic enrollment and existing configuration remain; tool permissions are selected explicitly, already granted permissions are skipped, Android special access remains optional, and stage/choices survive interruption. Check performs read-only health and authenticated device API requests. Only the existing health auto-start flag can start health monitoring; previously stopped monitoring stays stopped. Setup does not start sensitive capture or approve remote commands.
+- Home status separates saved enrollment from a verified connection and displays acknowledged upload time, monitoring state, notification access and pending tool uploads. Socket and feature transports record only server-accepted delivery timestamps; diagnostic timestamps cannot cause otherwise successful uploads to fail.
+- MainActivity now has a simpler home screen and collapsible Advanced settings. All previous actions, Kotlin files and function names remain. Device tools, both sharing scopes, Start/Stop, manual configuration, Android settings, reader reconnect and detailed diagnostics remain reachable.
+- Added a separate private installation page with a permanent download path, QR code, current APK version and three installation steps. It does not change Render data routing or require another API version-4 backend deployment.
+- VersionCode 7, versionName 0.4.0. Added camera-selection and readiness tests. Phone hardware, installation and actual Android UI behavior still need physical testing.
+
+
+## Local development workflow (source-only update, app version 0.4.0)
+
+- Added a debuggable `dev` build type with its own package/name and loopback API URL; normal debug/release defaults keep the existing Render URL. Automatic enrollment now reads the generated API_BASE_URL. No existing Kotlin file/function name was removed.
+- Added isolated backend `.env.dev` setup, watched startup and separate SQLite dev data. The local runner clears inherited production configuration; a Neon dev branch URL is optional and explicit.
+- Added a local dashboard entry point that overrides other endpoint configuration only in this dev process. Production build/start commands and server API implementation are unchanged.
+- Added Windows/shell setup, start and USB forwarding launchers, LOCAL-DEVELOPMENT.md, PROJECT.md, and a GitHub Actions test-APK build workflow.
+- Existing delivered APK/installation site and Render/Neon account configuration were not changed. Native Kotlin updates use Apply Changes or Run; one-second native updates are not promised.

@@ -8,6 +8,8 @@
   },
   "scripts": {
     "setup": "node setup.cjs",
+    "setup:dev": "node setup.cjs --dev",
+    "dev": "node --watch --watch-preserve-output dev-server.cjs",
     "start": "node --env-file=.env server.js",
     "start:render": "node server.js",
     "test": "node --test test/*.test.cjs"

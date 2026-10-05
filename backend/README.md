@@ -1,5 +1,7 @@
 # System Health backend
 
+For isolated local tests: `npm ci`, `npm run setup:dev`, then `npm run dev`. This loads `.env.dev`, clears inherited production connection settings and restarts on loaded-code changes. SQLite lives in `dev-data/`; an explicit Neon dev branch URL is optional. See `../LOCAL-DEVELOPMENT.md`.
+
 Requires Node.js 24+. Inside this folder run `npm ci`, `npm run setup`, and `npm start`. Setup creates random dashboard/JWT credentials in a private .env if one does not already exist, and prints the login details. Do not share .env. Defaults: server port 3000, dashboard origin http://localhost:5173, SQLite data under data/. Run `npm test` for integration tests.
 
 | Endpoint | Authentication | Purpose |

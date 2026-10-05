@@ -1,8 +1,12 @@
-# System Health 0.3.1
+# System Health 0.4.0
 
 A buildable Android app, authenticated Node backend, and responsive web dashboard.
 
-Start with **START-HERE.md**. The ready APK is supplied separately as **SystemHealth-debug.apk**.
+For fast local edits, use **LOCAL-DEVELOPMENT.md**. Windows shortcuts: **SETUP-DEV.cmd** once, **START-DEV.cmd** daily, and **CONNECT-PHONE.cmd** for USB. Choose the separate **System Health Dev** (`dev`) app to test against your laptop; normal debug/release variants keep Render. Give each AI **PROJECT.md** with its assigned file.
+
+Version 0.4.0 adds Connect → Permissions → Check setup, verified connection and acknowledged-upload status, a simpler home screen with Advanced settings, and a front-camera default with the rear option retained. It is compatible with the existing API version 4 backend; this update does not require another Render deployment.
+
+Installation page: **https://system-health-install.jkrick33.chatgpt.site** (private to your ChatGPT account). Start with **START-HERE.md**. The ready APK is supplied separately as **SystemHealth-debug.apk**.
 
 - Open `android/` in Android Studio to build the app.
 - Deploy `backend/` to the existing Render Node Web Service.

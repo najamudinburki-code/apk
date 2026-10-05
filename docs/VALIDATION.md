@@ -1,3 +1,35 @@
+# Validation — Android update 0.4.0
+
+- Android assembleDebug, lintDebug and testDebugUnitTest passed. Lint has zero errors; nonblocking SDK/style warnings remain.
+- All 21 unit tests passed with zero failures/errors: 14 existing checks, three front/rear camera-selection checks and four readiness-state checks.
+- Camera tests verify front selection even when rear is listed first, retained explicit rear choice and no silent rear fallback when front is unavailable.
+- Readiness tests verify that saved credentials alone cannot claim connectivity, stopped state remains explicit, first-upload waiting is shown and missing enrollment/notification access is handled.
+- Package com.example.systemhealth; versionCode 7; versionName 0.4.0; minSdk 26; targetSdk 35. Signing certificate verified against the previous delivered APK.
+- All 27 prior active Kotlin files and their existing function names remain. Three implementation files and two test files were added.
+- Backend, dashboard, original archives and variants are unchanged. No Render deployments or settings were changed. The new installation page is a separate private Site and serves the matching APK.
+- Connection verification is read-only: public health plus authenticated device-request GET. Upload timestamps are recorded only after successful server acknowledgement and are tied to the enrollment identity.
+- Previous sensitive sharing approvals, foreground notices, Stop/Cancel, both app-selection modes, manual connection settings, special-access links and reader reconciliation remain.
+- The private installation page contains a permanent APK path, QR, version and short setup instructions. Static links/assets and the APK signature/identity were checked before publication.
+- No Android phone/emulator is attached. Actual camera lens/rotation, installation, permission prompts, wizard interruption, Stop cleanup and OEM notifications still need physical-phone testing.
+
+## Previous validation records
+
+# Validation — Android update 0.3.2
+
+- Android assembleDebug, lintDebug and testDebugUnitTest passed. Lint reports zero errors; nonblocking SDK/style warnings remain.
+- 14 unit tests passed with zero failures/errors: six existing checks plus five permission-plan checks and three request-alert checks.
+- New permission tests cover Android API gates, explicit tool choice, skipping granted access, coarse/fine request pairing and exclusion of background/special access from runtime batches.
+- Request tests cover reordered lists, retried IDs and notice updates for new/completed requests.
+- Package com.example.systemhealth; versionCode 6; versionName 0.3.2; minSdk 26; targetSdk 35.
+- APK signature verified against the previous delivered APK; signing certificate is unchanged.
+- All 23 previous active Kotlin files and existing function names remain. Four implementation files and two unit-test files were added.
+- Backend and dashboard implementation files are unchanged in this update. This APK uses the existing API version 4 enrollment and upload APIs. No remote deployments or settings were changed.
+- The optional permission checklist prepares tools without invoking camera, audio, location, scans or app-text sharing. Existing Stop/Cancel and sensitive-request review paths remain.
+- Notifications remain visible. Active foreground-service notices are grouped with a summary, request alerts use a quiet default channel, and unchanged IDs do not repost the same request list.
+- No Android phone or emulator is attached. First-launch setup, rotation, granted/denied permission behavior, notification grouping, Stop cleanup and OEM behavior still require a physical-phone test. This is a signed debug/test APK.
+
+## Previous 0.3.1 validation record
+
 # Validation — completed bundle 0.3.1
 
 - Android `:app:assembleDebug :app:lintDebug :app:testDebugUnitTest`: build successful, 0 lint errors. Nonblocking SDK/style warnings remain.

@@ -1,6 +1,38 @@
-# Install the completed System Health app (0.3.1)
+# Install the System Health app (0.4.0)
 
 You have a compiled, signed **test APK**. You can install it directly; Android Studio is optional.
+
+**Editing locally?** Use **LOCAL-DEVELOPMENT.md** and the SETUP-DEV / START-DEV / CONNECT-PHONE shortcuts. Choose the separate Android `dev` variant for laptop testing; the installation instructions below apply to the existing Render-connected APK.
+
+## Install or update in three steps
+
+Open [Install System Health](https://system-health-install.jkrick33.chatgpt.site) on your Android phone, or scan the QR shown there. This installation page is private to your ChatGPT account; sign in with that account if prompted.
+
+1. Tap **Download latest APK**, then open the downloaded file and tap **Install** or **Update**. Android may ask you to allow installation from that browser/file manager. Version 0.4.0 uses the same signing certificate as the previous delivered test APK and keeps your existing enrollment and settings.
+2. Open System Health and follow **Connect → Permissions → Check**. Connection is automatic. Select the tools to prepare, allow the missing permissions, then review the connection check. Granted permissions are skipped, and missing permissions can be enabled later. The saved wizard stage and tool choices are kept when you leave setup.
+3. Tap **Finish — open home**. Check the server result, monitoring state and **Last successful upload**. That timestamp is recorded only after the server acknowledges an upload. New installations start health monitoring after permitted automatic enrollment and status-notification permission. Existing stopped monitoring remains stopped; tap Start when ready.
+
+If your backend health check already shows `api_version: 4` and `automatic_enrollment: true`, **no Render backend/dashboard redeployment is needed** for this Android update. The installation page is hosted separately from your existing dashboard; your data still goes to the configured Render backend.
+
+## Front camera and retained tools
+
+Open **Device tools, location and shared files**. The photo tool now defaults to **Front camera**. **Rear camera** remains available in the camera selector; your selection is remembered. A missing chosen lens produces an error and does not silently substitute the other camera. Both local photo consent and reviewed dashboard photo requests show which lens is used.
+
+All prior tools and function names remain. The home screen groups configuration and reader diagnostics under **Advanced settings**. Start, Stop, app-text sharing, guided setup and Device tools stay easy to reach. Sensitive requests still need phone review, and camera/microphone/screenshot controls remain visible.
+
+## Test this upgrade on your phone
+
+- Install as an update and confirm your existing phone appears under its original identity.
+- Complete the wizard, deny one optional permission, and confirm the remaining setup works. Reopen **Guided setup / permissions** and confirm allowed permissions are skipped.
+- Run **Check connection** and confirm both a reachable server and accepted phone credentials. Disable internet briefly, retry, and confirm the app reports a connection problem instead of claiming it is connected.
+- Start monitoring and confirm the successful-upload timestamp changes after the first sample. Compare the dashboard sample time.
+- Take an approved front-camera test photo. Confirm it is from the front lens in dashboard Files. Switch to Rear and repeat to check the retained option.
+- Expand **Advanced settings** and confirm manual connection settings, accessibility settings, notification access, reader reconnect and detailed status are still present.
+- Confirm Stop ends sharing and the active notices clear. Quiet, grouped notifications remain visible; phone/OEM presentation can vary.
+
+This is a signed test APK. Build, lint and unit checks pass, but no physical phone is connected here. Actual sensor, permission, notification and installation behavior still needs the phone checks above.
+
+The sections below describe first-time deployment. Skip them if your current version-4 backend/dashboard already work.
 
 ## 1. Update your existing GitHub repository
 
@@ -25,7 +57,7 @@ Keep your existing database URL, dashboard username/password, JWT secret and das
 
 Choose **Manual Deploy → Deploy latest commit** if auto-deploy has not started. Wait for **Live**.
 
-Open **https://apk-obeb.onrender.com/health**. The live backend was reachable during this update, but returned the older `{"ok":true}` response. The new code has not been deployed to your Render account. After you deploy this bundle, the updated backend returns:
+Open **https://apk-obeb.onrender.com/health**. The matching backend returns:
 
 ```json
 {"ok":true,"api_version":4,"automatic_enrollment":true}
@@ -50,8 +82,8 @@ Alternatively, use a fresh automatic setup: uninstall the previous app, then ins
 The APK contains your public server address: **https://apk-obeb.onrender.com**, plus an invitation used only to register a phone. The matching invitation hash is already in the backend bundle. **No new Render environment variable is required.** On first launch, the app generates its own random phone ID and separate random device token, saves them encrypted, and connects automatically. No URL, ID, token or dashboard approval needs to be entered for this APK.
 
 1. Deploy both updated Render folders as described above.
-2. Install and **open** the app. Keep it open while it connects. If Render is waking up, the app retries.
-3. Allow Android's notification permission when asked. Health monitoring then starts automatically and sends its first sample. If you decline the permission, enable notifications later and tap **Start System Health Monitor**.
+2. Install and **open** the app. Complete or skip the permission checklist, then return to the app and keep it open while it connects. If Render is waking up, the app retries.
+3. Allow Android's status-notification permission in setup. Health monitoring then starts automatically and sends its first sample after enrollment. If you decline or skip that permission, enable notifications later and tap **Start System Health Monitor**.
 4. Open your existing dashboard and sign in. The new phone appears automatically; there is no **Approve phone** step for this APK.
 
 Installing the file alone does not start the app. Android permissions and the phone user's screen/notification sharing decision still apply. Camera, microphone, location and screenshots use their existing controls.
@@ -64,14 +96,14 @@ This APK is an invitation to your server: anyone given a copy can enroll a phone
 
 | Component | Connection |
 | --- | --- |
-| Android app | Fixed `https://apk-obeb.onrender.com` URL in `AutomaticEnrollment.kt`; unique credentials generated for each installation |
+| Android app | Normal `https://apk-obeb.onrender.com` URL from `android/app/build.gradle.kts`; separate `dev` variant uses the laptop; unique credentials generated for each installation |
 | Render backend | Verifies the APK invitation, activates that phone, and authenticates its later uploads using its own device token |
 | Neon database | Backend reads/writes using the existing `DATABASE_URL` stored in Render; the APK does not connect directly to Neon |
 | Browser dashboard | Built with `VITE_SERVER_URL=https://apk-obeb.onrender.com`; signs in to the same backend and receives its device records/events |
 
 The dashboard's website address can differ from the backend address. Keep your existing dashboard URL; no dashboard URL is needed in the phone app. Future phones using this APK connect to the same backend and appear in the same dashboard after their first launch. Your computer does not need to stay on.
 
-If you change the backend's URL later, update `AutomaticEnrollment.SERVER_URL` and rebuild the APK for new installs; update `VITE_SERVER_URL` and rebuild the dashboard too. Existing phones can switch using Advanced connection settings with an enrollment valid on the new server. Keeping the same database retains existing identities and history. If you change only the dashboard's domain, update the backend's `DASHBOARD_ORIGIN` to that exact HTTPS origin; the APK's backend address does not change.
+If you change the backend's URL later, update the normal `API_BASE_URL` in `android/app/build.gradle.kts` and rebuild the APK for new installs; update `VITE_SERVER_URL` and rebuild the dashboard too. Existing phones can switch using Advanced connection settings with an enrollment valid on the new server. Keeping the same database retains existing identities and history. If you change only the dashboard's domain, update the backend's `DASHBOARD_ORIGIN` to that exact HTTPS origin; the APK's backend address does not change.
 
 For screen text and notifications:
 

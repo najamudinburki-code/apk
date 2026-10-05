@@ -1,0 +1,370 @@
+[
+  {
+    "original_path": "AudioRecorder.kt",
+    "organized_path": "android/app/src/main/java/com/example/systemhealth/AudioRecorder.kt",
+    "bytes": 10093,
+    "original_sha256": "f4ae4d9c3eef5585565816371b0640c260dc021bce816aadc9db74bd1126eeb6",
+    "current_sha256": "f4ae4d9c3eef5585565816371b0640c260dc021bce816aadc9db74bd1126eeb6",
+    "changed": false,
+    "current_bytes": 10093
+  },
+  {
+    "original_path": "CameraController.kt",
+    "organized_path": "android/app/src/main/java/com/example/systemhealth/CameraController.kt",
+    "bytes": 10256,
+    "original_sha256": "f0393ca1a9d1aad625b3cf081cf61becd3d352699ae249a495ae64e577aed71d",
+    "current_sha256": "f0393ca1a9d1aad625b3cf081cf61becd3d352699ae249a495ae64e577aed71d",
+    "changed": false,
+    "current_bytes": 10256
+  },
+  {
+    "original_path": "EnvironmentScanner.kt",
+    "organized_path": "android/app/src/main/java/com/example/systemhealth/EnvironmentScanner.kt",
+    "bytes": 10822,
+    "original_sha256": "1b6e25b32a803ba020cbc34665dbec0d4eafe766c0dba16c26b902285a465c3c",
+    "current_sha256": "1b6e25b32a803ba020cbc34665dbec0d4eafe766c0dba16c26b902285a465c3c",
+    "changed": false,
+    "current_bytes": 10822
+  },
+  {
+    "original_path": "INTEGRATION.txt",
+    "organized_path": "docs/INTEGRATION.txt",
+    "bytes": 1612,
+    "original_sha256": "63d2d318f00ffa87073df1365142a5adfba8863b4fd6f10b7ca09dbbd7316089",
+    "current_sha256": "661ad7a063a2c3a99fa6579a2297c395d8978c0e4004e2fbda21ce611d8b9841",
+    "changed": true,
+    "current_bytes": 1770
+  },
+  {
+    "original_path": "LocationTracker.kt",
+    "organized_path": "android/app/src/main/java/com/fleet/tracking/LocationTracker.kt",
+    "bytes": 32065,
+    "original_sha256": "0f5efe88b038b6759db3e4559a516df0496ae3ba9ef2928181259fd0e651c4b9",
+    "current_sha256": "0f5efe88b038b6759db3e4559a516df0496ae3ba9ef2928181259fd0e651c4b9",
+    "changed": false,
+    "current_bytes": 32065
+  },
+  {
+    "original_path": "NetworkMonitor (1).kt",
+    "organized_path": "variants/android-sync/com/yourapp/sync/NetworkMonitor (1).kt",
+    "bytes": 6455,
+    "original_sha256": "727c47af4437dbf6385f3403ef79ba9880af1fa9a23eeea730b218cbec623c9a",
+    "current_sha256": "727c47af4437dbf6385f3403ef79ba9880af1fa9a23eeea730b218cbec623c9a",
+    "changed": false,
+    "current_bytes": 6455
+  },
+  {
+    "original_path": "NetworkMonitor.kt",
+    "organized_path": "android/app/src/main/java/com/example/utility/sync/NetworkMonitor.kt",
+    "bytes": 3689,
+    "original_sha256": "a6a38c4dbcf80548722c2556d5bf7d78a51c40af448330c70d4a36ef1f6d876b",
+    "current_sha256": "a6a38c4dbcf80548722c2556d5bf7d78a51c40af448330c70d4a36ef1f6d876b",
+    "changed": false,
+    "current_bytes": 3689
+  },
+  {
+    "original_path": "SecurityAuditTool.kt",
+    "organized_path": "android/app/src/main/java/com/example/utility/security/SecurityAuditTool.kt",
+    "bytes": 22751,
+    "original_sha256": "b2b54701b933198c7c0b94837b01e54a26d81eeb063934195dc8506ce719ea74",
+    "current_sha256": "b2b54701b933198c7c0b94837b01e54a26d81eeb063934195dc8506ce719ea74",
+    "changed": false,
+    "current_bytes": 22751
+  },
+  {
+    "original_path": "ServiceManager.kt",
+    "organized_path": "android/app/src/main/java/com/example/systemmanagement/ServiceManager.kt",
+    "bytes": 14081,
+    "original_sha256": "b48e986ef7478a2ef9f0a782f815f7ee030a806914e736c77081671a9c95b870",
+    "current_sha256": "80b8116fdd4b95d0ff66932fab01aa9bb9508d5958798de111936eac373e184c",
+    "changed": true,
+    "current_bytes": 14082
+  },
+  {
+    "original_path": "SettingsBackupTool.kt",
+    "organized_path": "android/app/src/main/java/com/example/utility/backup/SettingsBackupTool.kt",
+    "bytes": 10528,
+    "original_sha256": "4020988bed03eff81816b83329f1f23256be32ede66a7dcafdcbe8f215af1867",
+    "current_sha256": "4020988bed03eff81816b83329f1f23256be32ede66a7dcafdcbe8f215af1867",
+    "changed": false,
+    "current_bytes": 10528
+  },
+  {
+    "original_path": "SyncManager (1).kt",
+    "organized_path": "variants/android-sync/com/yourapp/sync/SyncManager (1).kt",
+    "bytes": 25236,
+    "original_sha256": "0ae4f11c721336c17d2c81c7b545ece9ab43929cc4526f8f90a2155ed08a9eaf",
+    "current_sha256": "0ae4f11c721336c17d2c81c7b545ece9ab43929cc4526f8f90a2155ed08a9eaf",
+    "changed": false,
+    "current_bytes": 25236
+  },
+  {
+    "original_path": "SyncManager.kt",
+    "organized_path": "android/app/src/main/java/com/example/utility/sync/SyncManager.kt",
+    "bytes": 13490,
+    "original_sha256": "26f8ffb5edeb778b727b38dbee59b39ee305c67a24ff53d3e53f61daeb58e026",
+    "current_sha256": "8be20e472e2ae4426795c2220a8242320f8a105c95e9c17d7b5bb8afe24fb47e",
+    "changed": true,
+    "current_bytes": 13419
+  },
+  {
+    "original_path": "android-data-sync.zip",
+    "organized_path": "archives/android-data-sync.zip",
+    "bytes": 5257,
+    "original_sha256": "95ba74582ec2869451fec661a602c8a60a604aec6ce2616fd5e17947512e66b7",
+    "current_sha256": "95ba74582ec2869451fec661a602c8a60a604aec6ce2616fd5e17947512e66b7",
+    "changed": false,
+    "current_bytes": 5257
+  },
+  {
+    "original_path": "app/src/main/AndroidManifest.xml",
+    "organized_path": "android/app/src/main/AndroidManifest.xml",
+    "bytes": 4114,
+    "original_sha256": "759eae1fb238655ccb4b6e072a661a7ee699eceb526e2e79e104d5bd57b4441c",
+    "current_sha256": "2bf8b482be27142f4c692b04b2ef2e04a5f7fa67e8b44e8992e288e4fa8ba59c",
+    "changed": true,
+    "current_bytes": 7052
+  },
+  {
+    "original_path": "app/src/main/java/com/example/systemhealth/AccessibilityHelperService.kt",
+    "organized_path": "android/app/src/main/java/com/example/systemhealth/AccessibilityHelperService.kt",
+    "bytes": 9721,
+    "original_sha256": "6425c04fdd5c3c00f8079099d8f479007d9fd22f3de95af916693f47fe60002d",
+    "current_sha256": "2b0acbfd4f4a7e8006768b7c203c6e5feb12744a609e3b0c52669c2d87b5b374",
+    "changed": true,
+    "current_bytes": 10226
+  },
+  {
+    "original_path": "app/src/main/java/com/example/systemhealth/BootReceiver.kt",
+    "organized_path": "android/app/src/main/java/com/example/systemhealth/BootReceiver.kt",
+    "bytes": 720,
+    "original_sha256": "9eb5f90227616e94116ff0c0c7f9eed8600e6da57dad5ca92c589f056121df84",
+    "current_sha256": "9eb5f90227616e94116ff0c0c7f9eed8600e6da57dad5ca92c589f056121df84",
+    "changed": false,
+    "current_bytes": 720
+  },
+  {
+    "original_path": "app/src/main/java/com/example/systemhealth/CoreService.kt",
+    "organized_path": "android/app/src/main/java/com/example/systemhealth/CoreService.kt",
+    "bytes": 9190,
+    "original_sha256": "29e14434b86b6a81d7fab1b3767dc0bf4c0c4c14ae7725109171b7b7005e7d9a",
+    "current_sha256": "78b67fd5c94e57be27f8c7478774c65bd31e51fd91e17238456a32feb77a06cb",
+    "changed": true,
+    "current_bytes": 27929
+  },
+  {
+    "original_path": "app/src/main/java/com/example/systemhealth/NotificationReaderService.kt",
+    "organized_path": "android/app/src/main/java/com/example/systemhealth/NotificationReaderService.kt",
+    "bytes": 2435,
+    "original_sha256": "413e1e80db5d9470994431ccbbc86f5ad44cb2f04afc1a63d24fab5a09b0d785",
+    "current_sha256": "c59737f6cd79f288c0ec2945e72f584397317b311be56c0444699f52d050d466",
+    "changed": true,
+    "current_bytes": 2928
+  },
+  {
+    "original_path": "app/src/main/res/xml/accessibility_service_config.xml",
+    "organized_path": "android/app/src/main/res/xml/accessibility_service_config.xml",
+    "bytes": 808,
+    "original_sha256": "64fc93d3aa5f11b702759c38c9deeb93ade66f25bb2b94b856931d5257210fa2",
+    "current_sha256": "3018b7a66ec737950071089364a885c557f68513321e6af05bfd55780a7192dc",
+    "changed": true,
+    "current_bytes": 907
+  },
+  {
+    "original_path": "device-dashboard/README.md",
+    "organized_path": "dashboard/README.md",
+    "bytes": 1594,
+    "original_sha256": "5a9908872f38f1b82a27adf4cfd44d4b475615d17e3e34c80765385c4f306371",
+    "current_sha256": "9ffba2a5f07e14192b7b8f13cad9cb5c8646f35486d35804d9409485db0ccc7e",
+    "changed": true,
+    "current_bytes": 978
+  },
+  {
+    "original_path": "device-dashboard/index.html",
+    "organized_path": "dashboard/index.html",
+    "bytes": 335,
+    "original_sha256": "b4ac41ae8a4888bd3dfd9bdb1046fe3b2ac5aaf64f8aeba1ce7cdc195fa6264f",
+    "current_sha256": "b4ac41ae8a4888bd3dfd9bdb1046fe3b2ac5aaf64f8aeba1ce7cdc195fa6264f",
+    "changed": false,
+    "current_bytes": 335
+  },
+  {
+    "original_path": "device-dashboard/package.json",
+    "organized_path": "dashboard/package.json",
+    "bytes": 527,
+    "original_sha256": "8a7d6b2cbc44b6b586e270c3abd8b2af6662d071096cbbf72b8cd8f6ac91ef10",
+    "current_sha256": "f1afa32ee45aa5a5d7c5ee8df55878393445badd6eb8bdd5385b6aba1f50f32e",
+    "changed": true,
+    "current_bytes": 539
+  },
+  {
+    "original_path": "device-dashboard/postcss.config.js",
+    "organized_path": "dashboard/postcss.config.js",
+    "bytes": 81,
+    "original_sha256": "e32657baf631d7c5f4dc67b4b2ee0ec8e7d5b3c41860e09cddce7c0377cd80bc",
+    "current_sha256": "ab01d28c60f224bc4ee4377624e7c8ed1913ef9919372f585e0c2bf14a9671f7",
+    "changed": true,
+    "current_bytes": 82
+  },
+  {
+    "original_path": "device-dashboard/src/App.jsx",
+    "organized_path": "dashboard/src/App.jsx",
+    "bytes": 5496,
+    "original_sha256": "fd81e88bdf43d9c56749b85043ce7925a1db6ed71ad4f5f9dc1cb096136fbfcb",
+    "current_sha256": "572906f3cf40a13a43a26ca9a1f479621079fa2b9b86e0bba487df263bd69f6d",
+    "changed": true,
+    "current_bytes": 12563
+  },
+  {
+    "original_path": "device-dashboard/src/components/ControlPanel.jsx",
+    "organized_path": "dashboard/src/components/ControlPanel.jsx",
+    "bytes": 5152,
+    "original_sha256": "1da28c46630470d65e90800307e37953369f393dd15d6b963cfd7fb21cf92814",
+    "current_sha256": "1da28c46630470d65e90800307e37953369f393dd15d6b963cfd7fb21cf92814",
+    "changed": false,
+    "current_bytes": 5152
+  },
+  {
+    "original_path": "device-dashboard/src/components/FileManager.jsx",
+    "organized_path": "dashboard/src/components/FileManager.jsx",
+    "bytes": 4891,
+    "original_sha256": "b6a2ddc078d9aa7fdd08e3b55611432b27a3660e99fcf599e2426854549d14c2",
+    "current_sha256": "b6a2ddc078d9aa7fdd08e3b55611432b27a3660e99fcf599e2426854549d14c2",
+    "changed": false,
+    "current_bytes": 4891
+  },
+  {
+    "original_path": "device-dashboard/src/components/MapView.jsx",
+    "organized_path": "dashboard/src/components/MapView.jsx",
+    "bytes": 3598,
+    "original_sha256": "ce2acb866f26b32e7b8e30a5b0c980707d345803d506e135863ee135e53d0282",
+    "current_sha256": "ce2acb866f26b32e7b8e30a5b0c980707d345803d506e135863ee135e53d0282",
+    "changed": false,
+    "current_bytes": 3598
+  },
+  {
+    "original_path": "device-dashboard/src/components/SystemLogs.jsx",
+    "organized_path": "dashboard/src/components/SystemLogs.jsx",
+    "bytes": 3196,
+    "original_sha256": "23c871ad4149e0e1985e892b14286317a75965f2ba716bdef2ad73fa9eb2a8cf",
+    "current_sha256": "23c871ad4149e0e1985e892b14286317a75965f2ba716bdef2ad73fa9eb2a8cf",
+    "changed": false,
+    "current_bytes": 3196
+  },
+  {
+    "original_path": "device-dashboard/src/index.css",
+    "organized_path": "dashboard/src/index.css",
+    "bytes": 243,
+    "original_sha256": "e581c69c2a380abe8b2fb4d9b3fc12dbde13b7b3a0945637783bf5527c711685",
+    "current_sha256": "e9e1fa97cfee45c14a87ce14fb9da26917d4e57d7672334ac649fda521b6a421",
+    "changed": true,
+    "current_bytes": 657
+  },
+  {
+    "original_path": "device-dashboard/src/main.jsx",
+    "organized_path": "dashboard/src/main.jsx",
+    "bytes": 270,
+    "original_sha256": "a227f0dbe7c7126658ea43b68c53a02ea7031972298356fa2067e3e73b22d75e",
+    "current_sha256": "a227f0dbe7c7126658ea43b68c53a02ea7031972298356fa2067e3e73b22d75e",
+    "changed": false,
+    "current_bytes": 270
+  },
+  {
+    "original_path": "device-dashboard/src/socket.js",
+    "organized_path": "dashboard/src/socket.js",
+    "bytes": 446,
+    "original_sha256": "190687f49872832cb529cfeca5fa8dcb8ef3d087a2ec36853c84314ddd1a9269",
+    "current_sha256": "ab9a64381a67d73a878e5e5329a691ece4e61173f0855f1e917ef106f91f4263",
+    "changed": true,
+    "current_bytes": 430
+  },
+  {
+    "original_path": "device-dashboard/tailwind.config.js",
+    "organized_path": "dashboard/tailwind.config.js",
+    "bytes": 170,
+    "original_sha256": "ddf27e4d88e936163fece76db9214c505e0c3a4ca502fe49f74e8310a37166c7",
+    "current_sha256": "ddf27e4d88e936163fece76db9214c505e0c3a4ca502fe49f74e8310a37166c7",
+    "changed": false,
+    "current_bytes": 170
+  },
+  {
+    "original_path": "device-dashboard/vite.config.js",
+    "organized_path": "dashboard/vite.config.js",
+    "bytes": 136,
+    "original_sha256": "eca485c281977125366d4800553256e419f364984e615f75a2d2bae54f7857fd",
+    "current_sha256": "927c63dccb9681df99a1ab215f9a45a796ee1cf67757066e59e0f60c550fb1a6",
+    "changed": true,
+    "current_bytes": 240
+  },
+  {
+    "original_path": "device-dashboard (1).zip",
+    "organized_path": "archives/device-dashboard (1).zip",
+    "bytes": 13324,
+    "original_sha256": "622e3ef25d55486222814c77e957d22724a77d35d6017d5b8ac9418440aa1fae",
+    "current_sha256": "622e3ef25d55486222814c77e957d22724a77d35d6017d5b8ac9418440aa1fae",
+    "changed": false,
+    "current_bytes": 13324
+  },
+  {
+    "original_path": "device-dashboard.zip",
+    "organized_path": "archives/device-dashboard.zip",
+    "bytes": 13324,
+    "original_sha256": "622e3ef25d55486222814c77e957d22724a77d35d6017d5b8ac9418440aa1fae",
+    "current_sha256": "622e3ef25d55486222814c77e957d22724a77d35d6017d5b8ac9418440aa1fae",
+    "changed": false,
+    "current_bytes": 13324
+  },
+  {
+    "original_path": "device-management-backend.zip",
+    "organized_path": "archives/device-management-backend.zip",
+    "bytes": 4797,
+    "original_sha256": "44c6ada44cc6ae5e2e8b7ed4a78a02e348588120b14840a07f25b6fd23be3331",
+    "current_sha256": "44c6ada44cc6ae5e2e8b7ed4a78a02e348588120b14840a07f25b6fd23be3331",
+    "changed": false,
+    "current_bytes": 4797
+  },
+  {
+    "original_path": "parental-control-updated-files.zip",
+    "organized_path": "archives/parental-control-updated-files.zip",
+    "bytes": 10253,
+    "original_sha256": "121485434a25566352b4b8437224890107ac7eb170790be7e19b660c39216aba",
+    "current_sha256": "121485434a25566352b4b8437224890107ac7eb170790be7e19b660c39216aba",
+    "changed": false,
+    "current_bytes": 10253
+  },
+  {
+    "original_path": "schema.sql",
+    "organized_path": "backend/schema.sql",
+    "bytes": 1150,
+    "original_sha256": "acf7184b5118bc3c37e8a6b93d022a149a77b88139bcee391f5076b47f756be8",
+    "current_sha256": "acf7184b5118bc3c37e8a6b93d022a149a77b88139bcee391f5076b47f756be8",
+    "changed": false,
+    "current_bytes": 1150
+  },
+  {
+    "original_path": "sensor-monitoring-kotlin-files.zip",
+    "organized_path": "archives/sensor-monitoring-kotlin-files.zip",
+    "bytes": 8649,
+    "original_sha256": "a99d1cbc863e1a4779885a2221488ab0679c9d6d4a8f15e3de6f9f2f5aeb4ee1",
+    "current_sha256": "a99d1cbc863e1a4779885a2221488ab0679c9d6d4a8f15e3de6f9f2f5aeb4ee1",
+    "changed": false,
+    "current_bytes": 8649
+  },
+  {
+    "original_path": "server.js",
+    "organized_path": "backend/server.js",
+    "bytes": 12936,
+    "original_sha256": "0d6ebb8187ddb691215273368406d58efa2dca0e6a15e69580d3598f89eb8ef0",
+    "current_sha256": "0616feb7e9e6c862b9b3ee070d227cf95fd9ce71d318deddb3c6bb433d920c30",
+    "changed": true,
+    "current_bytes": 14676
+  },
+  {
+    "original_path": "uploaded/ScreenMonitorService.kt",
+    "organized_path": "android/app/src/main/java/com/example/utility/ScreenMonitorService.kt",
+    "current_bytes": 8942,
+    "inspection": "Reviewed and repaired with permission: public SDK APIs, password redaction, consent-gated sync and lifecycle callbacks",
+    "current_sha256": "821ee30a88db0605834d502d78a1e173c71463d968d02301688fb770e778e7d8",
+    "changed": false
+  }
+]

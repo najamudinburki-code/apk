@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const Database = require("better-sqlite3");
 const { Pool } = require("pg");
+const { createFeatureStore } = require("./feature-store.cjs");
 
 function createSqliteStore(databasePath) {
   fs.mkdirSync(path.dirname(path.resolve(databasePath)), { recursive: true });
@@ -55,7 +56,8 @@ function createSqliteStore(databasePath) {
     return Number(result.lastInsertRowid);
   });
 
-  return { queries, saveTelemetry, close: () => db.close(), kind: "sqlite" };
+  const features = createFeatureStore(db, false);
+  return { queries, saveTelemetry, features, close: () => db.close(), kind: "sqlite" };
 }
 
 async function createPostgresStore(databaseUrl) {
@@ -132,7 +134,9 @@ async function createPostgresStore(databaseUrl) {
       throw error;
     } finally { client.release(); }
   }
-  return { queries, saveTelemetry, close: () => db.end(), kind: "postgres" };
+  const features = createFeatureStore(db, true);
+  await features.ready;
+  return { queries, saveTelemetry, features, close: () => db.end(), kind: "postgres" };
 }
 
 async function createStore() {

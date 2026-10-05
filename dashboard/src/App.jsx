@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createDashboardSocket, SERVER_URL } from "./socket";
+import FeaturePanels from "./components/FeaturePanels";
+import EnrollmentPanel from "./components/EnrollmentPanel";
 
 async function api(path, token, options = {}) {
   const response = await fetch(`${SERVER_URL}${path}`, {
@@ -153,9 +155,10 @@ export default function App() {
       </header>
       <div className="mx-auto max-w-6xl space-y-8 p-6">
         {error && <p role="alert" className="rounded-lg bg-rose-950 p-4 text-rose-200">{error}</p>}
+        <EnrollmentPanel api={api} token={token} onUnauthorized={logout} onChanged={() => setRefresh(value => value + 1)} />
         <section className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-          <h2 className="text-lg font-semibold">1. Enroll a phone</h2>
-          <p className="mt-1 text-sm text-slate-400">Choose a unique ID, then enter the issued token in the Android app’s “Configure enrolled device” screen.</p>
+          <h2 className="text-lg font-semibold">Advanced manual enrollment</h2>
+          <p className="mt-1 text-sm text-slate-400">Automatic connection uses the New phones panel above. This optional form remains available for custom device IDs and manual connection through the app's Advanced connection settings.</p>
           <form onSubmit={enroll} className="mt-4 flex flex-wrap items-end gap-4">
             <label className="min-w-48 flex-1 text-sm">Device ID<input className="field" value={deviceId} onChange={e => setDeviceId(e.target.value)} pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,127}" maxLength={128} required /></label>
             <label className="min-w-48 flex-1 text-sm">Display name<input className="field" value={deviceName} onChange={e => setDeviceName(e.target.value)} maxLength={200} placeholder="My test phone" required /></label>
@@ -165,7 +168,7 @@ export default function App() {
             <p className="font-medium">Device created: {enrollment.device_id}</p>
             <p className="mt-2 text-sm text-indigo-200">This token is displayed once. Copy it to your phone before closing this page.</p>
             <label className="mt-3 block text-sm">Device token<input className="field font-mono" readOnly value={enrollment.device_token} onFocus={e => e.target.select()} /></label>
-            <p className="mt-3 text-sm text-slate-300">For local testing, the phone’s server URL is <code>http://YOUR-COMPUTER-LAN-IP:3000</code>. Both devices must be on the same Wi-Fi.</p>
+            <p className="mt-3 text-sm text-slate-300">The phone’s server URL is <code>{SERVER_URL}</code>. Enter this address in Configure enrolled device.</p>
           </div>}
         </section>
         <section>
@@ -189,9 +192,10 @@ export default function App() {
           </div>
           {!devices.length && <p className="mt-4 rounded-lg border border-dashed border-slate-700 p-8 text-center text-slate-400">Enroll your first phone above.</p>}
         </section>
+        <FeaturePanels token={token} devices={devices} events={events} api={api} />
         <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
           <h2 className="p-5 text-lg font-semibold">Recent received events</h2>
-          <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-800 text-slate-300"><tr><th className="p-4">Received</th><th className="p-4">Device</th><th className="p-4">Type</th><th className="p-4">Battery</th><th className="p-4">Details</th></tr></thead><tbody>{events.map(event => <tr key={event.event_id} className="border-t border-slate-800"><td className="p-4">{time(event.created_at)}</td><td className="p-4">{event.device_id}</td><td className="p-4">{event.payload?.type || event.event_type}</td><td className="p-4">{Number.isFinite(event.payload?.battery_percent) ? `${event.payload.battery_percent}%` : "—"}</td><td className="p-4"><details><summary className="cursor-pointer">View payload</summary><pre className="mt-2 max-h-72 max-w-md overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(event.payload, null, 2)}</pre></details></td></tr>)}</tbody></table></div>
+          <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-800 text-slate-300"><tr><th className="p-4">Received</th><th className="p-4">Device</th><th className="p-4">Type</th><th className="p-4">Battery</th><th className="p-4">Details</th></tr></thead><tbody>{events.map(event => <tr key={event.event_id} className="border-t border-slate-800"><td className="p-4">{time(event.created_at)}</td><td className="p-4">{event.device_id}</td><td className="p-4">{typeof event.payload?.type === "string" ? event.payload.type : event.event_type}</td><td className="p-4">{Number.isFinite(event.payload?.battery_percent) ? `${event.payload.battery_percent}%` : "—"}</td><td className="p-4"><details><summary className="cursor-pointer">View payload</summary><pre className="mt-2 max-h-72 max-w-md overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(event.payload, null, 2)}</pre></details></td></tr>)}</tbody></table></div>
           {!events.length && <p className="p-5 text-sm text-slate-400">No received data yet. Configure the phone, enable notifications, and tap Start.</p>}
         </section>
       </div>

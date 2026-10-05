@@ -15,6 +15,8 @@ const fs = require("node:fs");
 const crypto = require("node:crypto");
 const jwt = require("jsonwebtoken");
 const { createStore } = require("./store.cjs");
+const { installFeatures } = require("./features.cjs");
+const { installEnrollment } = require("./enrollment.cjs");
 const { Server } = require("socket.io");
 const { rateLimit } = require("express-rate-limit");
 
@@ -130,8 +132,8 @@ async function main() {
     if (origin) {
       res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
       res.setHeader("Vary", "Origin");
-      res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Device-Id");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
     }
 
     res.setHeader("Cache-Control", "no-store");
@@ -144,12 +146,15 @@ async function main() {
     next();
   });
 
-  app.use(express.json({ limit: "64kb", strict: true }));
+  app.use("/api/device/files", rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: "draft-7", legacyHeaders: false }));
+  const smallJson = express.json({ limit: "64kb", strict: true });
+  const fileJson = express.json({ limit: "6mb", strict: true });
+  app.use((req, res, next) => (req.path === "/api/device/files" ? fileJson : smallJson)(req, res, next));
 
   app.get("/health", (req, res) => {
     if (shuttingDown) return res.status(503).json({ ok: false });
     // Startup initialized the database. Avoid waking cloud compute on every health probe.
-    res.json({ ok: true });
+    res.json({ ok: true, api_version: 3 });
   });
 
   const { TLS_CERT_PATH, TLS_KEY_PATH } = process.env;
@@ -270,6 +275,9 @@ async function main() {
       next(error);
     }
   });
+
+  installFeatures({ app, db, authenticateDashboard, validDeviceId, io, hash });
+  installEnrollment({ app, db, authenticateDashboard, validDeviceId, io });
 
   // Dashboard handshake: { auth: { role: "dashboard", token: "<JWT>" } }
   // Device handshake:
@@ -515,7 +523,8 @@ async function main() {
   process.on("SIGTERM", shutdown);
 
 }
-main().catch(() => {
-  console.error("Backend startup failed. Check required environment variables and database connectivity.");
+main().catch((error) => {
+  console.error("Backend startup failed. Check required environment variables and database connectivity.",
+    error.code && /^[A-Z0-9_]{1,40}$/.test(error.code) ? error.code : error.name);
   process.exit(1);
 });

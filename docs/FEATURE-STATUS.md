@@ -1,24 +1,23 @@
-# Existing feature status
+# Connected feature status — 0.3.0
 
-Every existing Android Kotlin file and function name remains. All active Android sources, including ScreenMonitorService, participate in the build. Alternative implementations and original dashboard components are retained.
-
-| Feature | Current state | Remaining work |
+| Feature | Active path | Device condition |
 | --- | --- | --- |
-| System health | App → queued sync → authenticated backend → dashboard connected | Real-device/power/reboot testing |
-| Screen field monitor | Supported APIs, password redaction, consent UI, package gate, sync connected | Accessibility grant and device tests |
-| Accessibility text helper | Consent/debounce/traversal and sync connected | Enable one screen reader; device tests |
-| Notification reader | Consent UI, Settings shortcut, lifecycle/status and sync connected | Notification access grant and device tests |
-| Service manager / JobIntentService | Existing methods, job declaration, lifecycle callbacks and status retained | Decide optional reconciliation scheduling |
-| Location/geofencing | Full source/models compile; service and receivers registered | Visible permission/setup UI, initialize TrackingSink, connect feeds |
-| Camera | Capture/lifecycle methods retained; permission declared | Visible capture UI, permission flow, storage/upload design |
-| Audio | Recording/lifecycle methods retained; permission declared | Visible controls, permission flow, playback/storage/upload |
-| Environment scanner | Wi-Fi/Bluetooth code and permissions retained | Scan UI, runtime permissions, result display/feed |
-| Security audit / settings backup | Original utilities compile and remain | User controls and export/import/results |
-| Dashboard maps/files/controls | Original component files retained | Server feeds, Android transfer/command handlers, routing |
-| Alternative sync | Original files retained under variants | Choose one protocol before integrating an alternative |
+| Automatic enrollment | Fixed public URL → generated per-installation credentials → pending registration → dashboard approval → encrypted saved enrollment | Keep app open, approve once in dashboard, allow notifications; no typed URL/ID/token |
+| System health | CoreService → persistent SyncManager queue → authenticated server → health cards | Enroll and start monitoring |
+| Screen text/fields | Automatic/all-app or selected-app approval → one accessibility reader → queue → readable dashboard panel | No typed IDs; grant access and approve scope; target app must expose text; passwords redacted |
+| Notifications | NotificationReader → approved automatic/selected scope → queue → readable text panel | Grant notification access; Android may redact contents |
+| Service management | Lifecycle status callbacks, Start/Stop, JobIntentService reader reconciliation | Reconnect enabled readers; system owns accessibility binding |
+| Camera | Visible phone action → CameraController → saved file queue → dashboard Files | Camera permission and visible activity |
+| Audio | Start/Stop → AudioRecorder → finalized AAC/M4A chunks → queue → playback/download | Microphone permission; ends when activity pauses |
+| Screenshot | Android consent → one-shot projection foreground service → JPEG queue → Files | Per-session Android permission; secure windows remain protected |
+| Location | Application-initialized TrackingSink → location FGS → authenticated queued reports → map | Precise location/GPS and explicit start; Stop monitoring ends sharing |
+| Geofences | Add/remove/list/restore controls → original geofence APIs → sink → boundary history | Fine/background location; explicit location sharing |
+| Environment scan | Visible scan control → EnvironmentScanner → report queue → Nearby scans | Location, Wi-Fi, Bluetooth enabled; required runtime permissions |
+| Audit | Original redacted own-app audit → local review → export or explicit file share | Own private app data; no other-app sandbox bypass |
+| Settings backup | Original backup utility + app selection/geofences → export/share/restore controls | Credentials and active consent excluded; boundaries restored with separate approval |
+| Files | Android file/folder picker → local vault/export/delete → authenticated cloud upload/download/delete | Only selected accessible documents; storage quotas visible |
+| Dashboard controls | Authenticated request queue → phone review → action result → output panels | Phone monitoring on; no automatic covert captures |
+| Logs | Received event history with type/search filtering | Last 100 events; latest location also loaded independently |
+| Alternative source | Original archives, variants and prototype components retained | Active app uses the integrated protocol above |
 
-Camera/audio/scanning utilities require a visible activity and permissions. They are not invoked automatically by monitoring or server commands. No runtime permissions are automatically granted.
-
-Password text is intentionally redacted. The unsupported raw-password recovery attempt was replaced by supported ordinary-text/metadata handling; its monitoring functions and callback remain.
-
-Development builds are ready to compile. Production still needs phone testing, your signing key, retention/deletion, token rotation/revocation, HTTPS hosting, and completed optional workflows.
+All source files compile. Android controls are connected to the retained utilities. Software build/integration checks passed; physical sensor, OEM power/reboot and accessibility behavior require phone tests. A compiled APK does not guarantee that another app exposes every field or message.

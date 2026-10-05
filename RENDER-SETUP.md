@@ -152,3 +152,8 @@ render.yaml describes the same free backend + static site. Use either manual cre
 - https://render.com/docs/blueprint-spec
 - https://neon.com/blog/neon-free-plan-1-gb-per-project
 - https://node-postgres.com/features/ssl
+
+
+## Automatic phone connection in 0.3.0
+
+Deploy the complete updated backend and dashboard folders before installing the new APK. No new environment variables are required. `/health` now reports `api_version: 3`. The app uses https://apk-obeb.onrender.com, generates its own credentials, and registers a pending phone. In the dashboard, match the phone ID and choose Approve phone under New phones — approve once. Keep the app open; it detects approval and starts health monitoring after notification permission. Existing manually enrolled phones and advanced connection settings continue to work.

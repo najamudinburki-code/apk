@@ -1,0 +1,35 @@
+Historical snapshot: Historical integration notes supplied with the original source. Current instructions are in START-HERE.md and docs/CONNECTOR-REVIEW.md.
+
+Updated Android source bundle
+
+Contents
+- AccessibilityHelperService.kt: corrected pending-text debounce and duplicate tracking.
+- NotificationReaderService.kt: main-thread processing and blank-text fallback.
+- accessibility_service_config.xml: unchanged requested configuration.
+- AndroidManifest.xml: corrected service registrations and accessibility metadata.
+- CoreService.kt and BootReceiver.kt: existing dependencies, unchanged.
+
+Requirements: namespace/applicationId com.example.systemhealth, minSdk 23,
+compileSdk 35 or higher. This is source code, not an APK or a Gradle project.
+XML and wiring were validated. Android compilation/device testing was unavailable.
+
+Required existing-app integration
+The services preserve the existing opt-in ParentalCapture gate. They will not
+emit JSON until the app supplies an approved-package set and an in-process
+JSON consumer. Connect the following calls to your existing visible consent
+and Stop actions, on the main thread:
+
+Start, after the user approves the packages:
+    ParentalCapture.onJson = yourExistingJsonConsumer
+    val enabled = ParentalCapture.enable(this, yourApprovedPackages)
+    // Handle enabled == false in your existing UI.
+
+Stop:
+    ParentalCapture.disable(this)
+
+The two names above refer to values supplied by your app, not provided APIs.
+The existing System Health Start/Stop buttons in CoreService.kt do not perform
+this parental-capture initialization. Android accessibility and notification
+access must also be enabled by the device user in Settings.
+
+No upload endpoint, persistent text storage, or new monitoring feature is added.

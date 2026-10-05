@@ -578,7 +578,7 @@ class LocationTrackingService : Service() {
         val channel = NotificationChannel(
             CHANNEL_ID,
             "Vehicle location tracking",
-            NotificationManager.IMPORTANCE_LOW
+            NotificationManager.IMPORTANCE_MIN
         ).apply {
             description = "Shown while this vehicle's location is being shared with fleet management"
             setShowBadge(false)
@@ -589,25 +589,13 @@ class LocationTrackingService : Service() {
     }
 
     private fun buildNotification(text: String): Notification {
-        val contentIntent = packageManager.getLaunchIntentForPackage(packageName)?.let {
-            PendingIntent.getActivity(
-                this, 0, it,
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
-        }
-
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Vehicle tracking active")
-            .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setGroup(NotificationPresentation.GROUP)
-            .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_SUMMARY)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .apply { contentIntent?.let { setContentIntent(it) } }
             .build()
     }
 

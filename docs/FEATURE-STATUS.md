@@ -1,8 +1,8 @@
-# Connected feature status — 0.3.0
+# Connected feature status — 0.3.1
 
 | Feature | Active path | Device condition |
 | --- | --- | --- |
-| Automatic enrollment | Fixed public URL → generated per-installation credentials → pending registration → dashboard approval → encrypted saved enrollment | Keep app open, approve once in dashboard, allow notifications; no typed URL/ID/token |
+| Automatic enrollment | Fixed public URL + bundled invitation → generated per-installation credentials → automatic activation → encrypted saved enrollment | Deploy matching backend, open app and allow notifications; no typed URL/ID/token or dashboard approval |
 | System health | CoreService → persistent SyncManager queue → authenticated server → health cards | Enroll and start monitoring |
 | Screen text/fields | Automatic/all-app or selected-app approval → one accessibility reader → queue → readable dashboard panel | No typed IDs; grant access and approve scope; target app must expose text; passwords redacted |
 | Notifications | NotificationReader → approved automatic/selected scope → queue → readable text panel | Grant notification access; Android may redact contents |

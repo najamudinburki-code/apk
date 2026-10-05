@@ -1,159 +1,95 @@
-# Put System Health online with Render — beginner steps
+# Update your existing Render services — System Health 0.3.1
 
-Prepared 5 October 2026. This package is ready for account setup; it is not already deployed.
-The APK stays on your Android phone. Render hosts the backend and browser dashboard.
-Neon stores enrollment and telemetry in a persistent PostgreSQL database.
-Your computer can be turned off after deployment. Your phone and browser need internet.
+Your backend address is **https://apk-obeb.onrender.com**. It was reachable during verification, but returned the older health response. These new files have not been deployed to your account. Use your existing GitHub repository, Render Web Service, Render Static Site and Neon database.
 
-## 1. Upload the source to GitHub
+## 1. Update GitHub
 
-1. Download Render-deployment.zip and extract it on your computer.
-2. Sign up or sign in at https://github.com/.
-3. Click **New repository**, choose a name such as system-health-cloud, select **Private**, enable **Add a README file**, then create it.
-4. Click **Add file → Upload files**. Drag the extracted **backend** and **dashboard** folders, **render.yaml**, **RENDER-SETUP.md**, **.gitignore**, and **.node-version** into the page. Commit the upload. If hidden dotfiles are not visible, the deployment settings below still pin Node; add a Node .gitignore on GitHub before uploading future local work.
-5. Check that backend/package.json and dashboard/package.json appear directly under those two folders. Do not add another Render-deployment folder around them. Upload extracted files, not the ZIP itself.
+Extract Render-deployment.zip. Open its inner folder and upload the complete backend, dashboard, docs and root files to your existing repository, replacing the same paths. Keep backend and dashboard directly at the repository root. Do not upload the ZIP itself or create an extra wrapper folder.
 
-This deployment package contains no real password, database or device token. Keep future .env files, node_modules, SQLite files and signing keys out of GitHub. You can alternatively upload the full APK-integrated source with backend/dashboard directly at repository root; Android is not deployed by Render.
+Include the new **backend/installation.cjs** and all updated server/dashboard files. This deployment ZIP has the invitation hash, not its raw value. The Android source/APK includes the enrollment invitation. Anyone given that APK can register a phone, without dashboard access.
 
-## 2. Create the free persistent database
+Keep private .env files, database credentials, generated databases, node_modules and signing keys out of GitHub. The deployment ZIP excludes those files.
 
-1. Sign up/sign in at https://console.neon.tech/ and create a **Free** project.
-2. Use a name such as system-health-db. Choose a region near the Render region you will use. Keep the default PostgreSQL/database/role choices unless you already know you need something else.
-3. Open **Connect** / connection details. Choose the project database and role; enable **Connection pooling** if offered.
-4. Copy the PostgreSQL connection string, which begins with postgresql:// or postgres://. It is a secret. Paste it only into Render's backend DATABASE_URL field in step 4. Do not paste it into the dashboard, phone, GitHub, or a chat.
-5. You do not need to run schema.sql manually. The backend creates its PostgreSQL tables before accepting connections. Do not import the SQLite schema into Neon.
-
-Keep this database/project when updating or redeploying the app. Old records from a local SQLite database are not automatically copied to Neon; enroll a new cloud device in step 6. Keep your local project/database if you still need its old records.
-
-## 3. Create the dashboard on Render first
-
-1. Sign up/sign in at https://dashboard.render.com/. Use the free/Hobby workspace option.
-2. Click **New → Static Site**. Connect your GitHub account and select the repository you uploaded. Grant access to this private repository.
-3. Use these settings:
+## 2. Redeploy the existing backend
 
 | Setting | Value |
 | --- | --- |
-| Name | Choose a unique name, such as system-health-dashboard-yourname |
-| Branch | main, or the branch that actually contains your files |
-| Root Directory | Leave empty |
-| Build Command | npm --prefix dashboard ci && npm --prefix dashboard run build |
-| Publish Directory | dashboard/dist |
-
-4. Add these environment variables:
-
-| Key | Value |
-| --- | --- |
-| NODE_VERSION | 24 |
-| SKIP_INSTALL_DEPS | true |
-| VITE_SERVER_URL | https://placeholder.invalid |
-
-The placeholder allows the static site to build before you know the backend URL. It is not your server and login will not work yet.
-5. Create the static site and wait for deployment. Copy the actual HTTPS dashboard URL shown by Render. It will end in .onrender.com unless you configured your own domain. Save it as **DASHBOARD URL**. Do not assume the name determines the exact URL.
-
-## 4. Create the backend web service
-
-1. In Render, click **New → Web Service**, connect the same repository, and choose **Node**.
-2. Use these settings:
-
-| Setting | Value |
-| --- | --- |
-| Name | A unique name, such as system-health-backend-yourname |
-| Branch | Same branch as the dashboard |
-| Region | Near your Neon database |
+| Runtime | Node |
 | Root Directory | backend |
 | Build Command | npm ci |
 | Start Command | npm run start:render |
-| Instance Type | Free |
 | Health Check Path | /health |
-
-3. Add these environment variables:
-
-| Key | Value |
-| --- | --- |
 | NODE_VERSION | 24 |
 | TRUST_PROXY_HOPS | 1 |
-| DATABASE_URL | The secret Neon connection string from step 2 |
-| DASHBOARD_USERNAME | Your chosen login name, e.g. admin |
-| DASHBOARD_PASSWORD | A unique private password of at least 16 characters |
-| JWT_SECRET | A private random secret of at least 32 characters; generate it as below |
-| DASHBOARD_ORIGIN | The exact DASHBOARD URL from step 3, including https://, with no page path |
 
-To generate JWT_SECRET, run this once in a local terminal with Node.js 24 installed, then copy the result privately into Render:
+Retain the currently working **DATABASE_URL**, **DASHBOARD_USERNAME**, **DASHBOARD_PASSWORD**, **JWT_SECRET** and **DASHBOARD_ORIGIN** from Render's Environment page. Do not replace your Neon project or delete its records. The app uses the existing database and creates new tables automatically if needed.
 
-```sh
-node -e "console.log(require('node:crypto').randomBytes(48).toString('hex'))"
+**No new environment variable is required for automatic joining.** The matching invitation hash is already in installation.cjs. Leave AUTO_ENROLLMENT_KEY_HASH absent to use it. An optional `AUTO_ENROLLMENT_KEY_HASH=disabled` stops new automatic joins while existing devices continue working; remove this override and redeploy to use the bundled invitation again.
+
+If auto-deploy did not start, choose **Manual Deploy → Deploy latest commit**, then wait for Live. Open:
+
+https://apk-obeb.onrender.com/health
+
+Expected response:
+
+```json
+{"ok":true,"api_version":4,"automatic_enrollment":true}
 ```
 
-Keep the same JWT_SECRET when redeploying. Do not reuse the dashboard password as this secret.
-Do not run npm run setup on Render. Do not upload a .env file. Do not add TLS certificate paths or disable database TLS. Render supplies the HTTPS certificate and PORT automatically; the backend listens on that port and 0.0.0.0.
-4. Create the service. Wait for deployment, then copy its actual HTTPS URL as **BACKEND URL**.
-5. Open BACKEND URL + /health in a browser, e.g. https://your-actual-backend.onrender.com/health. A ready process returns {"ok":true}. The backend root / may say Cannot GET /; the dashboard is the separate static-site URL.
+The health endpoint confirms process initialization, not a fresh database query on each check. Data requests still require working database connectivity.
 
-The health endpoint confirms initialization and a running process. It does not query Neon on every health check, avoiding unnecessary database wake-ups. Database outages still cause data requests to fail; uploads are acknowledged only after persistence succeeds.
+## 3. Redeploy the existing dashboard
 
-## 5. Connect the dashboard to the backend
+Keep its current build settings. For a Static Site built from repository root, use:
 
-1. Open your Render **static site → Environment**.
-2. Change VITE_SERVER_URL from https://placeholder.invalid to the actual BACKEND URL.
-3. Save and rebuild/redeploy the static site. This is a build-time variable: a server restart alone does not change the compiled dashboard.
-4. Open the DASHBOARD URL and log in with the backend DASHBOARD_USERNAME / DASHBOARD_PASSWORD.
-5. Confirm the backend DASHBOARD_ORIGIN matches the exact dashboard origin you are opening. Changing to a custom domain requires updating this value and redeploying the backend.
+| Setting | Value |
+| --- | --- |
+| Root Directory | Empty |
+| Build Command | npm --prefix dashboard ci && npm --prefix dashboard run build |
+| Publish Directory | dashboard/dist |
+| NODE_VERSION | 24 |
+| SKIP_INSTALL_DEPS | true |
+| VITE_SERVER_URL | https://apk-obeb.onrender.com |
 
-## 6. Connect the Android app
+If your already working Static Site instead uses Root Directory dashboard, keep that layout with Build Command npm ci && npm run build and Publish Directory dist. Do not mix these two layouts.
 
-1. In the online dashboard, enroll a device such as phone-cloud-01 and copy its one-time device token privately.
-2. On the phone, open **System Health → Configure enrolled device**.
-3. Enter the **BACKEND URL**, enrolled device ID, and issued token. Use https:// with no /health or /api path. The dashboard URL is for your browser; the backend URL goes in the app.
-4. Save and start monitoring. Check that a system_health event appears on the dashboard. Later health samples are approximately five minutes apart while Android permits execution.
-5. Test using mobile data with your computer turned off. The phone and browser no longer need the same Wi-Fi.
-6. Optional screen/notification sharing still requires the phone user's approval, selected package list, and Android Settings grants. The cloud setup does not bypass those controls.
+VITE_SERVER_URL is compiled into the dashboard: choose **Save, rebuild, and deploy** after changing it. Open your existing dashboard URL and sign in using your existing backend dashboard credentials. The updated page shows **Automatic phone connection**, **Connected phones** and all the tool panels. Optional manual enrollment and legacy pending-request controls remain.
 
-After basic delivery works, redeploy the backend once and confirm the same enrollment still connects and past events remain. The Android source and supplied debug APK did not change for this hosting update.
+The backend's DASHBOARD_ORIGIN must equal the exact HTTPS origin of that dashboard (no path or trailing slash). The phone uses the backend URL; the dashboard's public address is only for your browser.
 
-## 7. Understand the free limits
+## 4. Install and open the current APK
 
-- Render's free backend sleeps after 15 minutes without incoming traffic. The next request can take about a minute to wake it. Wait and retry login if needed. Do not expect instant, uninterrupted 24-hour service from this plan.
-- Render's free filesystem is temporary. DATABASE_URL selects persistent Neon PostgreSQL; without it this backend refuses to start on Render. SQLite remains available locally.
-- Render's own Free Postgres currently expires after 30 days. This guide uses Neon instead.
-- Free Render services share monthly runtime, bandwidth and build limits. Static sites also use bandwidth/build allowances.
-- Neon's current Free plan includes 1 GB storage and 100 CU-hours per project each month. Continuous monitoring can exceed the compute allowance even with a small database. Data persists when compute sleeps, but service can be restricted at quota limits. Check usage in both dashboards.
-- Choose Free tiers and do not enable paid upgrades unless you intend to pay. Free hosting is suitable for learning and limited testing; it does not guarantee all-day monitoring within every quota.
+Install SystemHealth-debug.apk and **open it**. It generates a unique phone ID and device token, stores them encrypted, and connects automatically. Allow Android notifications; health monitoring starts automatically. No URL, phone ID, token or dashboard approval is needed for this APK. The phone appears in your dashboard without an approval click.
+
+A working previous enrollment is retained during a compatible upgrade. A pending 0.3.0 installation is automatically activated with the same identity after upgrading. A phone explicitly disabled or declined remains blocked. Advanced connection settings and manual enrollment remain available for recovery/custom servers.
+
+Screen/notification sharing still requires the phone user's sharing decision and Android Accessibility/Notification access grants. All supported apps is the default scope; no package names need to be typed. Camera, audio, screenshots, location and files use their existing controls. Stop stays effective.
+
+## How future installations connect
+
+The app's AutomaticEnrollment.SERVER_URL is fixed to https://apk-obeb.onrender.com. Its invitation matches backend/installation.cjs. After the one-time deployment, future phones using this APK join the same backend with separate credentials and appear in the same dashboard. The backend reads/writes your existing Neon database using DATABASE_URL. The dashboard reads authenticated events from the backend, not directly from Neon.
+
+Changing the dashboard URL alone requires updating DASHBOARD_ORIGIN in the backend. Changing the backend URL requires updating the app's fixed URL and rebuilding for new installations, plus changing VITE_SERVER_URL and rebuilding the dashboard. Existing phones can use Advanced connection settings if their identity/token is valid at the new server. Keeping the same database preserves records and phone credentials.
 
 ## Troubleshooting
 
-| What you see | Check |
+| What you see | Action |
 | --- | --- |
-| package.json not found | Repository folders and Root Directory/build commands |
-| Backend startup failed | Required env vars, secret lengths, correct Neon connection string, and database availability; never post the connection string publicly |
-| Login still uses localhost or placeholder | VITE_SERVER_URL on the static site, then rebuild it |
-| Origin not allowed | Backend DASHBOARD_ORIGIN must match your actual browser dashboard origin |
-| Invalid credentials | The backend's dashboard username/password; these differ from device tokens |
-| Device unauthorized | Device must be enrolled in the cloud dashboard with the exact ID and one-time token |
-| Login is slow after inactivity | Allow roughly a minute for free Render to wake, then retry |
-| No health event | Correct BACKEND URL in app, Start monitoring, phone internet, notification/service status and Render logs |
-| Rate limit response | Too many login attempts; wait for the 15-minute window instead of repeatedly submitting |
+| Old {"ok":true} health response | Deploy the complete updated backend; check the repository branch and Root Directory |
+| automatic_enrollment:false | Remove an unintended AUTO_ENROLLMENT_KEY_HASH=disabled override and redeploy |
+| Invitation does not match | Use this APK with its matching backend/installation.cjs; remove an unintended invitation-hash override |
+| Automatic enrollment route missing | Deploy the updated backend/enrollment.cjs, installation.cjs and server files |
+| Backend startup failed | Check existing required environment variables and database availability; keep secrets private |
+| Login reaches localhost/another server | Set VITE_SERVER_URL on the Static Site and rebuild |
+| Origin not allowed | Set backend DASHBOARD_ORIGIN to your exact dashboard origin |
+| Connection is slow | Keep the app open with internet while Render wakes; it retries |
+| Previously stopped monitoring | Tap Start; Stop deliberately prevents automatic restarting |
+| App not installed/signature conflict | Build with the previous signing key for an update, or uninstall/reinstall after preserving needed local data |
+| New phone not appearing | Verify health API version 4, Android connection status and the dashboard's backend URL |
 
-## Optional Blueprint
+No live account deployment or physical-phone test was performed. APK compilation/lint, six Android unit tests, 28 backend checks per storage setup, dashboard build and browser checks passed. See START-HERE.md for all tool usage and docs/VALIDATION.md for limits.
 
-render.yaml describes the same free backend + static site. Use either manual creation above OR New → Blueprint, not both (which creates duplicates). A Blueprint prompts for DATABASE_URL, DASHBOARD_PASSWORD, DASHBOARD_ORIGIN and VITE_SERVER_URL, and generates JWT_SECRET. If assigned URLs are not known initially, use https://placeholder.invalid for the two public URL fields, then replace DASHBOARD_ORIGIN with the actual dashboard URL and VITE_SERVER_URL with the actual backend URL and rebuild. Do not enter real credentials into render.yaml. Review that the backend plan is free and there is no paid disk/database before creating resources.
+Official setup references checked 5 October 2026:
 
-## Verification performed
-
-- 14 backend checks pass with SQLite.
-- The same 14 checks pass through node-postgres against PGlite's PostgreSQL engine/socket server: enrollment, authentication, saved telemetry, live delivery, command dispatch and persistence after backend restart.
-- Dashboard production build passes.
-- No live Render/Neon account deployment or real phone test was performed. The PostgreSQL checks used a local PostgreSQL engine; production TLS and provider connectivity are verified by your first deployment.
-
-## Official documentation (checked 5 October 2026)
-
-- https://render.com/docs/free
 - https://render.com/docs/deploy-node-express-app
-- https://render.com/docs/static-sites
-- https://render.com/docs/blueprint-spec
-- https://neon.com/blog/neon-free-plan-1-gb-per-project
-- https://node-postgres.com/features/ssl
-
-
-## Automatic phone connection in 0.3.0
-
-Deploy the complete updated backend and dashboard folders before installing the new APK. No new environment variables are required. `/health` now reports `api_version: 3`. The app uses https://apk-obeb.onrender.com, generates its own credentials, and registers a pending phone. In the dashboard, match the phone ID and choose Approve phone under New phones — approve once. Keep the app open; it detects approval and starts health monitoring after notification permission. Existing manually enrolled phones and advanced connection settings continue to work.
+- https://render.com/docs/configure-environment-variables

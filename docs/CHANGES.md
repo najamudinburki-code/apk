@@ -51,3 +51,14 @@ Fixed the public Render address in AutomaticEnrollment and added per-installatio
 Added persistent PostgreSQL/SQLite enrollment requests, authenticated dashboard approval/decline and proof-authenticated phone status polling. Public registration cannot activate a device. Pending requests expire after 24 hours and can be renewed by the same phone; declined/disabled phones stay blocked. No dashboard password, database password or shared device token is embedded in the APK. The health API version is now 3.
 
 Added a New phones dashboard panel while retaining the manual enrollment form and every previous tool panel. Updated tests cover pending phones, duplicate approval, credential isolation, expiry renewal and disabled phones. Version 0.3.0 uses versionCode 4. All previous Kotlin files and function names remain.
+
+
+## 0.3.1 — automatic connection without dashboard approval
+
+The current APK now registers with an enrollment-only invitation, whose matching SHA-256 hash is bundled in the backend. New installations join immediately, generate their own ID/device token, and start health monitoring on first launch after Android notification permission. No URL, phone ID, token, package-name input or dashboard approval is needed in this path. A pending installation upgrading from 0.3.0 keeps its identity and joins automatically. Existing approved phones keep their credentials. Disabled/declined phones are not reactivated.
+
+The default invitation needs no new Render environment variable. Anyone given this APK can enroll a phone; it contains no dashboard password or database credentials. Optional AUTO_ENROLLMENT_KEY_HASH=disabled stops future automatic joins while existing device connections continue. Registration without an invitation retains the legacy pending workflow. Manual enrollment and advanced phone settings remain available.
+
+The dashboard now explains automatic connection and refreshes its device roster when an enrollment changes, so new phones appear immediately. All existing tool panels and legacy approval/decline controls remain. Android permissions, screen/notification sharing disclosure, visible notifications, password redaction, per-action sensor controls and Stop remain. No previous Kotlin file or function name was removed.
+
+VersionCode is 5, versionName 0.3.1. Health reports api_version 4 and automatic_enrollment. Twenty-eight backend checks pass in each storage test setup; Android build/lint/six unit checks and dashboard build/browser checks pass. The matching backend/dashboard bundle still needs one deployment to the user's existing Render services.

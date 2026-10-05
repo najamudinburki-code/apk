@@ -100,6 +100,7 @@ export default function App() {
         logout(); setError("Session expired. Please sign in again.");
       } else { setError("Live connection unavailable. Check the server and refresh."); }
     });
+    socket.on("enrollment:changed", load);
     socket.on("device:status", status => {
       setDevices(previous => previous.map(device => device.device_id === status.device_id
         ? { ...device, online: status.online } : device));
@@ -158,7 +159,7 @@ export default function App() {
         <EnrollmentPanel api={api} token={token} onUnauthorized={logout} onChanged={() => setRefresh(value => value + 1)} />
         <section className="rounded-xl border border-slate-800 bg-slate-900 p-6">
           <h2 className="text-lg font-semibold">Advanced manual enrollment</h2>
-          <p className="mt-1 text-sm text-slate-400">Automatic connection uses the New phones panel above. This optional form remains available for custom device IDs and manual connection through the app's Advanced connection settings.</p>
+          <p className="mt-1 text-sm text-slate-400">The current APK connects automatically. This optional form remains available for custom device IDs and manual connection through the app's Advanced connection settings.</p>
           <form onSubmit={enroll} className="mt-4 flex flex-wrap items-end gap-4">
             <label className="min-w-48 flex-1 text-sm">Device ID<input className="field" value={deviceId} onChange={e => setDeviceId(e.target.value)} pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,127}" maxLength={128} required /></label>
             <label className="min-w-48 flex-1 text-sm">Display name<input className="field" value={deviceName} onChange={e => setDeviceName(e.target.value)} maxLength={200} placeholder="My test phone" required /></label>
@@ -168,12 +169,12 @@ export default function App() {
             <p className="font-medium">Device created: {enrollment.device_id}</p>
             <p className="mt-2 text-sm text-indigo-200">This token is displayed once. Copy it to your phone before closing this page.</p>
             <label className="mt-3 block text-sm">Device token<input className="field font-mono" readOnly value={enrollment.device_token} onFocus={e => e.target.select()} /></label>
-            <p className="mt-3 text-sm text-slate-300">The phone’s server URL is <code>{SERVER_URL}</code>. Enter this address in Configure enrolled device.</p>
+            <p className="mt-3 text-sm text-slate-300">The phone’s server URL is <code>{SERVER_URL}</code>. Enter this address in Advanced connection settings for a manual connection.</p>
           </div>}
         </section>
         <section>
-          <h2 className="text-lg font-semibold">2. Start monitoring in the Android app</h2>
-          <p className="mt-1 text-sm text-slate-400">The app sends one health sample immediately, then every five minutes. “Idle” between uploads is normal. Check the last sample time.</p>
+          <h2 className="text-lg font-semibold">Connected phones</h2>
+          <p className="mt-1 text-sm text-slate-400">The current APK starts health monitoring after connection and Android notification permission. It sends one sample immediately, then every five minutes. “Idle” between uploads is normal. Check the last sample time.</p>
           <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {devices.map(device => {
               const health = device.latest_health ||
@@ -190,13 +191,13 @@ export default function App() {
               </article>;
             })}
           </div>
-          {!devices.length && <p className="mt-4 rounded-lg border border-dashed border-slate-700 p-8 text-center text-slate-400">Enroll your first phone above.</p>}
+          {!devices.length && <p className="mt-4 rounded-lg border border-dashed border-slate-700 p-8 text-center text-slate-400">Open the current APK on your phone to connect automatically.</p>}
         </section>
         <FeaturePanels token={token} devices={devices} events={events} api={api} />
         <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
           <h2 className="p-5 text-lg font-semibold">Recent received events</h2>
           <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-800 text-slate-300"><tr><th className="p-4">Received</th><th className="p-4">Device</th><th className="p-4">Type</th><th className="p-4">Battery</th><th className="p-4">Details</th></tr></thead><tbody>{events.map(event => <tr key={event.event_id} className="border-t border-slate-800"><td className="p-4">{time(event.created_at)}</td><td className="p-4">{event.device_id}</td><td className="p-4">{typeof event.payload?.type === "string" ? event.payload.type : event.event_type}</td><td className="p-4">{Number.isFinite(event.payload?.battery_percent) ? `${event.payload.battery_percent}%` : "—"}</td><td className="p-4"><details><summary className="cursor-pointer">View payload</summary><pre className="mt-2 max-h-72 max-w-md overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(event.payload, null, 2)}</pre></details></td></tr>)}</tbody></table></div>
-          {!events.length && <p className="p-5 text-sm text-slate-400">No received data yet. Configure the phone, enable notifications, and tap Start.</p>}
+          {!events.length && <p className="p-5 text-sm text-slate-400">No received data yet. Open the phone app, allow notifications, and wait for its automatic connection. If you previously stopped monitoring, tap Start.</p>}
         </section>
       </div>
     </main>

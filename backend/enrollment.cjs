@@ -2,8 +2,8 @@
 const crypto = require("node:crypto");
 const { rateLimit } = require("express-rate-limit");
 
-// Phones generate their own random credentials. Only dashboard approval activates them.
-function installEnrollment({ app, db, authenticateDashboard, validDeviceId, io }) {
+// The matching APK invitation allows automatic enrollment; legacy clients can wait for approval.
+function installEnrollment({ app, db, authenticateDashboard, validDeviceId, io, installationKeyHash }) {
   const { query } = db.features;
   const limiter = limit => rateLimit({ windowMs: 60_000, limit, standardHeaders: "draft-7", legacyHeaders: false });
   const hash = token => crypto.createHash("sha256").update(token).digest("hex");
@@ -29,6 +29,18 @@ function installEnrollment({ app, db, authenticateDashboard, validDeviceId, io }
     let current = await state(id, token);
     if (current === "unauthorized") return res.status(401).json({ error: "Unauthorized" });
     if (["approved", "disabled", "rejected"].includes(current)) return res.json({ state: current });
+    if (req.body.installation_key !== undefined) {
+      if (!installationKeyHash) return res.status(503).json({ error: "Automatic enrollment is disabled" });
+      const invitation = req.body.installation_key;
+      if (typeof invitation !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(invitation) ||
+          !crypto.timingSafeEqual(Buffer.from(hash(invitation), "hex"), Buffer.from(installationKeyHash, "hex"))) {
+        return res.status(403).json({ error: "Invalid installation invitation" });
+      }
+      current = await db.features.autoEnroll(id, name.trim(), hash(token));
+      if (current === "unauthorized") return res.status(401).json({ error: "Unauthorized" });
+      io.to("dashboards").emit("enrollment:changed");
+      return res.json({ state: current });
+    }
     const now = new Date().toISOString();
     const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     if (current === "expired") {
@@ -66,7 +78,7 @@ function installEnrollment({ app, db, authenticateDashboard, validDeviceId, io }
     if (!pending) return res.status(404).json({ error: "Enrollment not found" });
     if (pending.status === "rejected") return res.status(409).json({ error: "Enrollment was rejected" });
     if (pending.expires_at <= new Date().toISOString()) return res.status(410).json({ error: "Open the phone app to renew this request" });
-    // Only this authenticated route creates an active device from the pending record.
+    // Retain dashboard approval for legacy clients without this APK's invitation.
     await query(`INSERT INTO devices(device_id,name,token_hash)
       SELECT device_id,name,token_hash FROM enrollment_requests WHERE device_id=? AND status='pending' AND expires_at>?
       ON CONFLICT(device_id) DO NOTHING`, [id, new Date().toISOString()], "run");

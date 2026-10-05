@@ -17,6 +17,7 @@ const jwt = require("jsonwebtoken");
 const { createStore } = require("./store.cjs");
 const { installFeatures } = require("./features.cjs");
 const { installEnrollment } = require("./enrollment.cjs");
+const { installationKeyHash } = require("./installation.cjs");
 const { Server } = require("socket.io");
 const { rateLimit } = require("express-rate-limit");
 
@@ -45,6 +46,7 @@ async function main() {
   const JWT_ISSUER = "device-management";
   const JWT_AUDIENCE = "dashboard";
 
+  const automaticEnrollmentHash = installationKeyHash();
   const db = await createStore();
   const { queries, saveTelemetry } = db;
 
@@ -154,7 +156,7 @@ async function main() {
   app.get("/health", (req, res) => {
     if (shuttingDown) return res.status(503).json({ ok: false });
     // Startup initialized the database. Avoid waking cloud compute on every health probe.
-    res.json({ ok: true, api_version: 3 });
+    res.json({ ok: true, api_version: 4, automatic_enrollment: Boolean(automaticEnrollmentHash) });
   });
 
   const { TLS_CERT_PATH, TLS_KEY_PATH } = process.env;
@@ -277,7 +279,7 @@ async function main() {
   });
 
   installFeatures({ app, db, authenticateDashboard, validDeviceId, io, hash });
-  installEnrollment({ app, db, authenticateDashboard, validDeviceId, io });
+  installEnrollment({ app, db, authenticateDashboard, validDeviceId, io, installationKeyHash: automaticEnrollmentHash });
 
   // Dashboard handshake: { auth: { role: "dashboard", token: "<JWT>" } }
   // Device handshake:

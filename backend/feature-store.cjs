@@ -102,6 +102,38 @@ function createFeatureStore(db, postgres) {
     ) AS latest WHERE position=1 ORDER BY event_id DESC LIMIT 30`, [device]);
     return rows.map(row => ({ ...row, payload: typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload }));
   }
-  return { ready, query, saveEvent, saveFile, latestEvents };
+  async function autoEnroll(id, name, tokenHash) {
+    await ready;
+    const existingState = row => row.token_hash !== tokenHash ? "unauthorized" : row.enabled ? "approved" : "disabled";
+    if (!postgres) return db.transaction(() => {
+      const device = db.prepare("SELECT token_hash,enabled FROM devices WHERE device_id=?").get(id);
+      if (device) return existingState(device);
+      const pending = db.prepare("SELECT name,token_hash,status FROM enrollment_requests WHERE device_id=?").get(id);
+      if (pending?.token_hash && pending.token_hash !== tokenHash) return "unauthorized";
+      if (pending?.status === "rejected") return "rejected";
+      db.prepare("INSERT INTO devices(device_id,name,token_hash) VALUES (?,?,?)").run(id, pending?.name || name, tokenHash);
+      db.prepare("UPDATE enrollment_requests SET status='approved' WHERE device_id=?").run(id);
+      return "approved";
+    })();
+    const client = await db.connect();
+    try {
+      await client.query("BEGIN");
+      const device = (await client.query("SELECT token_hash,enabled FROM devices WHERE device_id=$1 FOR UPDATE", [id])).rows[0];
+      if (device) { await client.query("COMMIT"); return existingState(device); }
+      const pending = (await client.query("SELECT name,token_hash,status FROM enrollment_requests WHERE device_id=$1 FOR UPDATE", [id])).rows[0];
+      if (pending && (pending.token_hash !== tokenHash || pending.status === "rejected")) {
+        await client.query("COMMIT"); return pending.token_hash !== tokenHash ? "unauthorized" : "rejected";
+      }
+      await client.query("INSERT INTO devices(device_id,name,token_hash) VALUES ($1,$2,$3) ON CONFLICT(device_id) DO NOTHING", [id, pending?.name || name, tokenHash]);
+      const current = (await client.query("SELECT token_hash,enabled FROM devices WHERE device_id=$1", [id])).rows[0];
+      const state = existingState(current);
+      if (state === "approved") await client.query("UPDATE enrollment_requests SET status='approved' WHERE device_id=$1", [id]);
+      await client.query("COMMIT"); return state;
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch { /* Preserve the original error. */ }
+      throw error;
+    } finally { client.release(); }
+  }
+  return { ready, query, saveEvent, saveFile, latestEvents, autoEnroll };
 }
 module.exports = { createFeatureStore };

@@ -20,9 +20,11 @@ test("enrollment, authenticated telemetry, live dashboard, and persistence", { t
   await new Promise(resolve => reservation.close(resolve));
   const url = `http://127.0.0.1:${port}`;
   const password = crypto.randomBytes(24).toString("base64url");
+  const installationKey = crypto.randomBytes(32).toString("base64url");
   const database = path.join(folder, "devices.sqlite");
   const env = { ...process.env, DATABASE_URL: pgTestUrl || "", PG_SSL_MODE: pgTestUrl ? "disable" : "", RENDER: "", PORT: String(port), DATABASE_PATH: database,
     JWT_SECRET: crypto.randomBytes(48).toString("hex"), DASHBOARD_USERNAME: "test-admin",
+    AUTO_ENROLLMENT_KEY_HASH: crypto.createHash("sha256").update(installationKey).digest("hex"),
     DASHBOARD_PASSWORD: password, DASHBOARD_ORIGIN: "http://localhost:5173", TLS_CERT_PATH: "", TLS_KEY_PATH: "", TRUST_PROXY_HOPS: "1" };
   let child;
   const sockets = [];
@@ -76,7 +78,7 @@ test("enrollment, authenticated telemetry, live dashboard, and persistence", { t
     await t.test("public health check returns readiness without exposing credentials", async () => {
       const health = await request("/health");
       assert.equal(health.status, 200);
-      assert.deepEqual(health.body, { ok: true, api_version: 3 });
+      assert.deepEqual(health.body, { ok: true, api_version: 4, automatic_enrollment: true });
     });
     await t.test("REST authentication rejects missing and incorrect credentials", async () => {
       assert.equal((await request("/api/devices")).status, 401);
@@ -256,6 +258,38 @@ test("enrollment, authenticated telemetry, live dashboard, and persistence", { t
       assert.equal((await request("/api/requests?device_id=phone-01", token)).body.requests[0].status, "completed");
     });
     const automaticId = `phone-${crypto.randomUUID()}`;
+    const joinedId = `phone-${crypto.randomUUID()}`;
+    const joinedToken = crypto.randomBytes(32).toString("base64url");
+    const joinedBody = { device_id: joinedId, device_token: joinedToken, name: "APK invitation phone", installation_key: installationKey };
+    const joinClient = { "X-Forwarded-For": "198.51.100.101" };
+    await t.test("matching APK joins immediately and concurrent retries create only one phone", async () => {
+      const results = await Promise.all([request("/api/enrollment/register", "", joinedBody, joinClient), request("/api/enrollment/register", "", joinedBody, joinClient)]);
+      assert.ok(results.every(result => result.status === 200 && result.body.state === "approved"));
+      assert.equal((await request("/api/enrollment/status", joinedToken, undefined, { "X-Device-Id": joinedId })).body.state, "approved");
+      assert.equal((await request("/api/devices", token)).body.devices.filter(row => row.device_id === joinedId).length, 1);
+      assert.equal((await request("/api/device/events", joinedToken, { event_id: crypto.randomUUID(), payload: { type: "system_health" } }, { "X-Device-Id": joinedId })).status, 200);
+      assert.ok(!(await request("/api/enrollments", token)).body.requests.some(row => row.device_id === joinedId));
+    });
+    await t.test("wrong APK invitation cannot register a phone or read the dashboard", async () => {
+      const id = `phone-${crypto.randomUUID()}`;
+      const body = { ...joinedBody, device_id: id, installation_key: crypto.randomBytes(32).toString("base64url") };
+      assert.equal((await request("/api/enrollment/register", "", body, joinClient)).status, 403);
+      assert.equal((await request("/api/devices", installationKey)).status, 401);
+      assert.ok(!(await request("/api/devices", token)).body.devices.some(row => row.device_id === id));
+    });
+    await t.test("upgrading a pending phone connects its existing identity without dashboard approval", async () => {
+      const id = `phone-${crypto.randomUUID()}`;
+      const secret = crypto.randomBytes(32).toString("base64url");
+      const body = { device_id: id, device_token: secret, name: "Upgraded phone" };
+      const client = { "X-Forwarded-For": "198.51.100.103" };
+      assert.equal((await request("/api/enrollment/register", "", body, client)).body.state, "pending");
+      const upgraded = await request("/api/enrollment/register", "", { ...body, installation_key: installationKey }, client);
+      assert.equal(upgraded.status, 200);
+      assert.equal(upgraded.body.state, "approved");
+      assert.equal((await request("/api/enrollment/status", secret, undefined, { "X-Device-Id": id })).body.state, "approved");
+      assert.equal((await request("/api/devices", token)).body.devices.filter(row => row.device_id === id).length, 1);
+      assert.ok(!(await request("/api/enrollments", token)).body.requests.some(row => row.device_id === id));
+    });
     const automaticToken = crypto.randomBytes(32).toString("base64url");
     const automaticBody = { device_id: automaticId, device_token: automaticToken, name: "Automatically connected phone" };
     const declinedId = `phone-${crypto.randomUUID()}`;
@@ -287,6 +321,7 @@ test("enrollment, authenticated telemetry, live dashboard, and persistence", { t
       assert.equal((await request(`/api/enrollments/${declinedId}/reject`, token, {})).body.state, "rejected");
       assert.equal((await request("/api/enrollment/register", "", body)).body.state, "rejected");
       assert.equal((await request(`/api/enrollments/${declinedId}/approve`, token, {})).status, 409);
+      assert.equal((await request("/api/enrollment/register", "", { ...body, installation_key: installationKey }, { "X-Forwarded-For": "198.51.100.102" })).body.state, "rejected");
     });
     async function updateEnrollment(sqliteSql, postgresSql, values) {
       if (pgTestUrl) {
@@ -314,6 +349,7 @@ test("enrollment, authenticated telemetry, live dashboard, and persistence", { t
       assert.equal((await request("/api/enrollment/status", automaticToken, undefined, { "X-Device-Id": automaticId })).body.state, "disabled");
       assert.equal((await request("/api/enrollment/register", "", automaticBody, { "X-Forwarded-For": "198.51.100.91" })).body.state, "disabled");
       assert.equal((await request("/api/device/events", automaticToken, { event_id: crypto.randomUUID(), payload: { type: "system_health" } }, { "X-Device-Id": automaticId })).status, 401);
+      assert.equal((await request("/api/enrollment/register", "", { ...automaticBody, installation_key: installationKey }, { "X-Forwarded-For": "198.51.100.102" })).body.state, "disabled");
     });
     await stop(); await start();
     await t.test("cloud/local feature outputs and request results survive restart", async () => {
@@ -324,6 +360,17 @@ test("enrollment, authenticated telemetry, live dashboard, and persistence", { t
       assert.equal((await request("/api/files", token)).body.files.length, 0);
       assert.equal((await request("/api/enrollment/status", automaticToken, undefined, { "X-Device-Id": automaticId })).body.state, "disabled");
       assert.equal((await request("/api/enrollment/status", declinedToken, undefined, { "X-Device-Id": declinedId })).body.state, "rejected");
+      assert.equal((await request("/api/enrollment/status", joinedToken, undefined, { "X-Device-Id": joinedId })).body.state, "approved");
+    });
+    await stop();
+    env.AUTO_ENROLLMENT_KEY_HASH = "disabled";
+    await start();
+    await t.test("disabling new automatic joins preserves existing phone connections", async () => {
+      assert.equal((await request("/health")).body.automatic_enrollment, false);
+      const fresh = { ...joinedBody, device_id: `phone-${crypto.randomUUID()}`, device_token: crypto.randomBytes(32).toString("base64url") };
+      assert.equal((await request("/api/enrollment/register", "", fresh)).status, 503);
+      assert.equal((await request("/api/enrollment/status", joinedToken, undefined, { "X-Device-Id": joinedId })).body.state, "approved");
+      assert.equal((await request("/api/device/events", joinedToken, { event_id: crypto.randomUUID(), payload: { type: "system_health" } }, { "X-Device-Id": joinedId })).status, 200);
     });
   } finally { await stop(); rmSync(folder, { recursive: true, force: true }); }
 });

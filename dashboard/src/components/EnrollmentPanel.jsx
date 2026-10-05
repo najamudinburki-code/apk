@@ -4,13 +4,17 @@ export default function EnrollmentPanel({ api, token, onChanged, onUnauthorized 
   const [requests, setRequests] = useState([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  const [automatic, setAutomatic] = useState(null);
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
     async function load() {
       try {
-        const result = await api("/api/enrollments", token, { signal: controller.signal });
-        if (active) { setRequests(result.requests); setError(""); }
+        const [result, health] = await Promise.all([
+          api("/api/enrollments", token, { signal: controller.signal }),
+          api("/health", token, { signal: controller.signal }),
+        ]);
+        if (active) { setRequests(result.requests); setAutomatic(health.automatic_enrollment === true); setError(""); }
       } catch (err) {
         if (!active || err.name === "AbortError") return;
         if (err.status === 401) onUnauthorized();
@@ -33,10 +37,12 @@ export default function EnrollmentPanel({ api, token, onChanged, onUnauthorized 
     } finally { setBusy(""); }
   }
   return <section className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-    <h2 className="text-lg font-semibold">New phones — approve once</h2>
-    <p className="mt-1 text-sm text-slate-400">Open the Android app. It fills the server address and generates its own ID and token. Match the phone ID below with the ID shown on your phone, then approve a phone you manage. No configuration needs to be typed on the phone.</p>
+    <h2 className="text-lg font-semibold">Automatic phone connection</h2>
+    <p className="mt-1 text-sm text-slate-400">Open the current APK and allow its Android permissions. It fills the server address, generates its own ID and token, and joins automatically. No dashboard approval is required for this APK. Connected phones appear in the device list below.</p>
+    {automatic === false && <p className="mt-3 text-amber-300">Automatic enrollment is unavailable on this server. Deploy the matching backend files or check its installation setting.</p>}
     {error && <p role="alert" className="mt-3 text-rose-300">{error}</p>}
-    {!requests.length && <p className="mt-4 text-sm text-slate-400">No phones waiting for approval. Keep the app open while it connects.</p>}
+    {!requests.length && <p className="mt-4 text-sm text-slate-400">Keep the app open while it connects. Legacy pending requests, when present, remain available here.</p>}
+    {!!requests.length && <h3 className="mt-4 font-medium">Legacy pending requests</h3>}
     <div className="mt-4 grid gap-3 md:grid-cols-2">
       {requests.map(request => <article key={request.device_id} className="rounded-lg border border-slate-700 p-4">
         <h3 className="font-medium">{request.name}</h3>

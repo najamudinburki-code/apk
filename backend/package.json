@@ -1,0 +1,26 @@
+{
+  "name": "system-health-backend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "setup": "node setup.cjs",
+    "start": "node --env-file=.env server.js",
+    "start:render": "node server.js",
+    "test": "node --test test/*.test.cjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.3",
+    "express": "5.2.1",
+    "express-rate-limit": "8.7.0",
+    "jsonwebtoken": "9.0.3",
+    "pg": "8.23.1",
+    "socket.io": "4.8.4"
+  },
+  "devDependencies": {
+    "socket.io-client": "4.8.4"
+  }
+}

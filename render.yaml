@@ -1,0 +1,41 @@
+# Optional Blueprint. The beginner guide uses manual creation instead.
+# Enter placeholder HTTPS origins if actual URLs are not assigned yet;
+# replace them with the exact assigned service URLs after creation.
+services:
+  - type: web
+    name: system-health-backend
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: npm run start:render
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DASHBOARD_USERNAME
+        value: admin
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      - key: DASHBOARD_ORIGIN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+  - type: web
+    name: system-health-dashboard
+    runtime: static
+    buildCommand: npm --prefix dashboard ci && npm --prefix dashboard run build
+    staticPublishPath: dashboard/dist
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: SKIP_INSTALL_DEPS
+        value: "true"
+      - key: VITE_SERVER_URL
+        sync: false

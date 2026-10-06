@@ -278,6 +278,66 @@ async function main() {
     }
   });
 
+  function disconnectDeviceSockets(id) {
+    for (const socketId of io.sockets.adapter.rooms.get(`device:${id}`) || []) {
+      io.sockets.sockets.get(socketId)?.disconnect(true);
+    }
+  }
+
+  // Revoking access is rare, so cap it: a leaked dashboard token must not be able to
+  // rotate or disable every phone in a loop.
+  const manageLimiter = rateLimit({ windowMs: 60_000, limit: 15, standardHeaders: "draft-7", legacyHeaders: false });
+
+  app.post("/api/devices/:id/token", authenticateDashboard, manageLimiter, async (req, res, next) => {
+    const id = req.params.id;
+    if (!validDeviceId(id)) return res.status(400).json({ error: "Invalid device_id" });
+    const device = await queries.findDevice.get(id);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+    const deviceToken = crypto.randomBytes(32).toString("base64url");
+    try {
+      // Rotate and revoke together: the old token stops working immediately.
+      await queries.rotateDeviceToken.run(hash(deviceToken).toString("hex"), id);
+      // Keep a pending enrollment in sync so approving it cannot restore the old credential.
+      await db.features.query("UPDATE enrollment_requests SET token_hash=? WHERE device_id=? AND status='pending'",
+        [hash(deviceToken).toString("hex"), id], "run");
+      disconnectDeviceSockets(id);
+      res.json({ device_id: id, device_token: deviceToken, replaces: true });
+    } catch (error) { next(error); }
+  });
+
+  app.post("/api/devices/:id/enabled", authenticateDashboard, manageLimiter, async (req, res, next) => {
+    const id = req.params.id;
+    if (!validDeviceId(id) || typeof req.body?.enabled !== "boolean") {
+      return res.status(400).json({ error: "Invalid device_id or enabled flag" });
+    }
+    const device = await queries.findDevice.get(id);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+    try {
+      await queries.setDeviceEnabled.run(req.body.enabled ? 1 : 0, id);
+      if (!req.body.enabled) disconnectDeviceSockets(id);
+      res.json({ device_id: id, enabled: req.body.enabled });
+    } catch (error) { next(error); }
+  });
+
+  const retentionDays = Number(process.env.RETENTION_DAYS || "30");
+  if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650) {
+    throw new Error("RETENTION_DAYS must be an integer from 1 to 3650.");
+  }
+
+  async function pruneNow() {
+    const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
+    return db.features.pruneRetention(cutoff);
+  }
+
+  const retentionTimer = setInterval(() => {
+    pruneNow().then(
+      removed => console.log(`Retention sweep removed ${JSON.stringify(removed)}.`),
+      () => console.error("Retention sweep failed; data is unchanged.")
+    );
+  }, 6 * 60 * 60 * 1000);
+  retentionTimer.unref();
+  pruneNow().catch(() => console.error("Startup retention sweep failed; data is unchanged."));
+
   installFeatures({ app, db, authenticateDashboard, validDeviceId, io, hash });
   installEnrollment({ app, db, authenticateDashboard, validDeviceId, io, installationKeyHash: automaticEnrollmentHash });
 
@@ -315,6 +375,8 @@ async function main() {
 
         socket.data.role = "device";
         socket.data.deviceId = device.device_id;
+        // Remembered so a later rotation or re-enrollment invalidates this live connection.
+        socket.data.tokenHash = device.token_hash;
       } else {
         throw new Error("Invalid role.");
       }
@@ -380,6 +442,12 @@ async function main() {
           socket.disconnect(true);
           throw new Error("Device disabled.");
         }
+
+        // A rotation between handshake and now must not leave the old credential working.
+        if (device.token_hash !== socket.data.tokenHash) {
+          socket.disconnect(true);
+          throw new Error("Device credentials changed.");
+        }
       }
 
       const now = Date.now();
@@ -412,61 +480,6 @@ async function main() {
       } catch (error) {
         if (error.code) {
           console.error("Telemetry persistence failed.");
-          return respond(ack, { ok: false, error: "Persistence failed." });
-        }
-
-        respond(ack, { ok: false, error: error.message });
-      }
-    });
-
-    socket.on("command:send", async (message, ack) => {
-      try {
-        await authorize("dashboard");
-
-        const targetId = message?.device_id;
-
-        if (!validDeviceId(targetId)) {
-          throw new Error("Invalid device_id.");
-        }
-
-        const device = await queries.findDevice.get(targetId);
-
-        if (!device?.enabled) {
-          throw new Error("Device unavailable.");
-        }
-
-        const room = `device:${targetId}`;
-
-        if (!io.sockets.adapter.rooms.get(room)?.size) {
-          throw new Error("Device offline.");
-        }
-
-        const serialized = serializeObject(message.command);
-        const commandId = crypto.randomUUID();
-        const command = {
-          command_id: commandId,
-          device_id: targetId,
-          issued_at: new Date().toISOString(),
-          command: JSON.parse(serialized),
-        };
-
-        await queries.insertEvent.run(
-          targetId,
-          "command:send",
-          JSON.stringify(command)
-        );
-
-        io.to(room).emit("command:receive", command);
-
-        // Dispatch acknowledgement; execution requires a device response.
-        respond(ack, {
-          ok: true,
-          command_id: commandId,
-          status: "dispatched",
-        });
-      } catch (error) {
-        if (error.code) {
-          console.error("Command persistence failed.");
           return respond(ack, { ok: false, error: "Persistence failed." });
         }
 
@@ -523,6 +536,8 @@ async function main() {
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+  // Windows cannot deliver those signals to a child process, so a test harness asks over IPC.
+  process.on("message", message => { if (message === "shutdown") shutdown(); });
 
 }
 main().catch((error) => {

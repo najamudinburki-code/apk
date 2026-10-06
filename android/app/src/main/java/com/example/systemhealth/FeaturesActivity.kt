@@ -51,9 +51,9 @@ class FeaturesActivity : Activity() {
         layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 24, 24, 24) }
         setContentView(ScrollView(this).apply { addView(layout) })
         label("Device tools", 24f)
-        label("Outputs you choose to share are queued on this phone, then sent to your enrolled server while monitoring is on. Maximum file: 4 MiB. Camera and microphone stop when you leave this screen.")
+        label("Dashboard requests run as soon as they reach the phone while monitoring is on. Camera, microphone, screenshots and file picking still need Android permissions and this visible screen.")
         status = label("")
-        button("Review dashboard requests") { reviewRequests() }
+        button("Run pending dashboard requests") { runPendingRequests() }
         button("Cancel active dashboard request") {
             val id = requestId
             requestId = null
@@ -160,7 +160,7 @@ class FeaturesActivity : Activity() {
     private fun message(text: String) { Toast.makeText(this, text, Toast.LENGTH_LONG).show(); status.text = text }
     private fun refresh() {
         if (!CoreService.isSyncReady && recording) { audio?.stopRecording(); recording = false }
-        if (::status.isInitialized) status.text = "Monitoring: ${CoreService.isRunning}\nLocation: ${LocationTracker.isTracking.value}\nMicrophone: ${if (recording) "recording" else "off"}\n${FeatureBridge.status}\nPending tool uploads: ${FeatureBridge.pendingCount(this)}\nRequests awaiting review: ${FeatureBridge.pendingRequests(this).size}"
+        if (::status.isInitialized) status.text = "Monitoring: ${CoreService.isRunning}\nLocation: ${LocationTracker.isTracking.value}\nMicrophone: ${if (recording) "recording" else "off"}\n${FeatureBridge.status}\nPending tool uploads: ${FeatureBridge.pendingCount(this)}\nUnsent items kept aside: ${FeatureBridge.failedCount(this)}\nPending dashboard requests: ${FeatureBridge.pendingRequests(this).size}"
     }
     private fun consent(text: String, action: () -> Unit) {
         if (requestId != null) { message("Finish or cancel the active dashboard request first."); return }
@@ -500,9 +500,9 @@ class FeaturesActivity : Activity() {
                 }, { fail(it.message ?: "Geofence restore failed") })
             } }.show()
     }
-    private fun reviewRequests() {
+    private fun runPendingRequests() {
         val requests = FeatureBridge.pendingRequests(this)
-        if (requests.isEmpty()) { message("No requests awaiting review. Monitoring checks the server every 30 seconds."); return }
+        if (requests.isEmpty()) { message("No pending requests. Monitoring checks the server every 10 seconds."); return }
         if (requestId != null || recording) { message("Finish the active request or recording first."); return }
         AlertDialog.Builder(this).setTitle("Dashboard requests")
             .setItems(requests.map { it.getString("action").removePrefix("request_") }.toTypedArray()) { _, index ->

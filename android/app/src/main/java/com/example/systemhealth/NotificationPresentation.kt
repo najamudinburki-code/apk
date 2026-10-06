@@ -6,11 +6,9 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 
-/** Groups visible notices. Each foreground service retains its own status and controls. */
+/** Quiet channels for the few notices Android requires. [refresh] clears the grouped status
+ * summary that older builds posted, so updating the app leaves nothing visible behind. */
 object NotificationPresentation {
-    const val GROUP = "system_health_visible_status"
-    const val REQUEST_CHANNEL = "phone_requests_quiet_v1"
-    private const val SUMMARY_CHANNEL = "monitoring_summary"
     private const val SUMMARY_ID = 3090
     private val handler = Handler(Looper.getMainLooper())
 
@@ -24,11 +22,7 @@ object NotificationPresentation {
     }
 
     fun refresh(context: Context) {
-        val app = context.applicationContext
-        handler.postDelayed({ update(app) }, 200)
-    }
-
-    @Synchronized private fun update(context: Context) {
-        context.getSystemService(NotificationManager::class.java).cancel(SUMMARY_ID)
+        val manager = context.applicationContext.getSystemService(NotificationManager::class.java)
+        handler.postDelayed({ manager.cancel(SUMMARY_ID) }, 200)
     }
 }

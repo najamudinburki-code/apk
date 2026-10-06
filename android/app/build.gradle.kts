@@ -9,8 +9,8 @@ android {
         applicationId = "com.example.systemhealth"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.4.0"
+        versionCode = 8
+        versionName = "0.5.0"
         buildConfigField("String", "API_BASE_URL", "\"https://apk-obeb.onrender.com\"")
     }
     buildFeatures { buildConfig = true }
@@ -19,7 +19,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     buildTypes {
-        release { isMinifyEnabled = false }
+        release {
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
         create("dev") {
             initWith(getByName("debug"))
             applicationIdSuffix = ".dev"

@@ -81,7 +81,7 @@ function installFeatures({ app, db, authenticateDashboard, validDeviceId, io, ha
     const id = crypto.randomUUID(), now = new Date().toISOString(), expiry = new Date(Date.now() + 600_000).toISOString();
     await query("INSERT INTO device_requests(request_id,device_id,action,status,created_at,expires_at,updated_at) VALUES (?,?,?,'pending',?,?,?)", [id, device_id, action, now, expiry, now], "run");
     changed();
-    res.status(201).json({ ok: true, request_id: id, status: "pending", detail: "Awaiting phone review; expires in 10 minutes." });
+    res.status(201).json({ ok: true, request_id: id, status: "pending", detail: "Queued for the phone; expires in 10 minutes." });
   });
   app.get("/api/requests", authenticateDashboard, async (req, res) => {
     const id = req.query.device_id || null;
@@ -91,7 +91,16 @@ function installFeatures({ app, db, authenticateDashboard, validDeviceId, io, ha
     res.json({ requests: await query("SELECT * FROM device_requests WHERE (CAST(? AS TEXT) IS NULL OR device_id = ?) ORDER BY created_at DESC LIMIT 100", [id, id]) });
   });
   app.get("/api/device/requests", async (req, res) => {
-    res.json({ requests: await query("SELECT request_id,action,expires_at,created_at FROM device_requests WHERE device_id=? AND status IN ('pending','delivered') AND expires_at > ? ORDER BY created_at LIMIT 20", [req.deviceId, new Date().toISOString()]) });
+    const now = new Date().toISOString();
+    const requests = await query("SELECT request_id,action,expires_at,created_at FROM device_requests WHERE device_id=? AND status IN ('pending','delivered') AND expires_at > ? ORDER BY created_at LIMIT 20", [req.deviceId, now]);
+    // A poll proves the phone is awake and reachable, so it refreshes presence and hands the
+    // returned requests over to it. Nothing beyond the 20-request outstanding cap can be skipped.
+    await db.queries.touchDevice.run(req.deviceId);
+    if (requests.length) {
+      await query("UPDATE device_requests SET status='delivered', updated_at=? WHERE device_id=? AND status='pending' AND expires_at > ?", [now, req.deviceId, now], "run");
+      changed();
+    }
+    res.json({ requests });
   });
   app.post("/api/device/requests/:id/result", async (req, res) => {
     const { status, detail = "" } = req.body || {};

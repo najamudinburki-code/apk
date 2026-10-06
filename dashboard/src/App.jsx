@@ -34,6 +34,73 @@ function uptime(ms) {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+function ago(value) {
+  const diff = Date.now() - new Date(value).getTime();
+  if (!value || !Number.isFinite(diff)) return "unknown";
+  const seconds = Math.max(0, Math.round(diff / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
+}
+
+// A monitoring phone checks in about every ten seconds, so a stale timestamp is the real fault signal.
+function lastContact(value) {
+  if (!value) return { text: "No check-in yet", tone: "text-amber-300" };
+  const age = ago(value);
+  return Date.now() - new Date(value).getTime() > 90_000
+    ? { text: `Silent for ${age}`, tone: "text-rose-300" }
+    : { text: `Checked in ${age} ago`, tone: "text-emerald-300" };
+}
+
+function DeviceCard({ device, api, token, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [secret, setSecret] = useState("");
+  const [error, setError] = useState("");
+  const health = device.latest_health ||
+    (device.latest_payload?.type === "system_health" ? device.latest_payload : null);
+  const contact = lastContact(device.last_seen);
+  // The token is shown once, so keep it on screen only long enough to copy into the app.
+  useEffect(() => {
+    if (!secret) return undefined;
+    const clear = setTimeout(() => setSecret(""), 60_000);
+    return () => clearTimeout(clear);
+  }, [secret]);
+
+  async function act(path, body, warning) {
+    if (warning && !confirm(warning)) return;
+    setBusy(true); setError("");
+    try {
+      const result = await api(`/api/devices/${encodeURIComponent(device.device_id)}${path}`, token, { method: "POST", body: JSON.stringify(body) });
+      if (result.device_token) setSecret(result.device_token);
+      onChanged();
+    } catch (err) {
+      setError(err.status === 401 ? "Session expired. Sign in again." : err.message);
+    } finally { setBusy(false); }
+  }
+
+  return <article className="rounded-xl border border-slate-800 bg-slate-900 p-5">
+    <div className="flex items-start justify-between gap-2"><div><h3 className="font-semibold">{device.name}</h3><p className="text-xs text-slate-400">{device.device_id}</p></div><span className={`text-xs ${!device.enabled ? "text-rose-300" : device.online ? "text-emerald-300" : contact.tone}`}>{!device.enabled ? "Disabled" : device.online ? "Uploading now" : contact.text}</span></div>
+    <dl className="mt-5 grid grid-cols-2 gap-4 text-sm">
+      <div><dt className="text-slate-400">Battery</dt><dd className="mt-1 text-xl">{Number.isFinite(health?.battery_percent) ? `${health.battery_percent}%` : "—"}</dd></div>
+      <div><dt className="text-slate-400">Uptime</dt><dd className="mt-1 text-xl">{uptime(health?.uptime_ms)}</dd></div>
+      <div className="col-span-2"><dt className="text-slate-400">Phone</dt><dd>{health ? `${health.manufacturer} ${health.model}` : "Waiting for first health sample"}</dd></div>
+      {health && <div className="col-span-2"><dt className="text-slate-400">Version</dt><dd>Android {health.android_version} (SDK {health.android_sdk}) · App {health.app_version}</dd></div>}
+      <div className="col-span-2"><dt className="text-slate-400">Last health sample</dt><dd>{time(health?.timestamp)}</dd></div>
+      <div className="col-span-2"><dt className="text-slate-400">Last server contact</dt><dd>{time(device.last_seen)}</dd></div>
+    </dl>
+    {secret && <p className="mt-3 rounded-lg border border-indigo-800 bg-indigo-950/50 p-3 text-sm text-indigo-200">New token, shown once: <code className="break-all font-mono">{secret}</code> Enter it in the app’s Advanced connection settings; the old token no longer works.</p>}
+    {error && <p role="alert" className="mt-3 text-sm text-rose-300">{error}</p>}
+    <div className="mt-4 flex flex-wrap gap-2">
+      <button className="secondary" disabled={busy} onClick={() => act("/enabled", { enabled: !device.enabled },
+        device.enabled ? null : `Re-enable ${device.name}? It can upload data again as soon as it connects.`)}>
+        {device.enabled ? "Disable phone" : "Re-enable phone"}
+      </button>
+      <button className="secondary text-amber-200" disabled={busy} onClick={() => act("/token", {}, `Rotate the token for ${device.device_id}? Its current token stops working at once and you must type the new one on the phone.`)}>Rotate token</button>
+    </div>
+  </article>;
+}
+
 export default function App() {
   // Credentials and the one-time enrollment token stay in memory for this tab.
   const [token, setToken] = useState("");
@@ -113,8 +180,9 @@ export default function App() {
             ...(event.payload?.type === "system_health" ? { latest_health: event.payload } : {}) } : device));
     });
     load(); socket.connect();
+    const timer = setInterval(load, 20_000);
     return () => {
-      active = false; controller.abort();
+      active = false; controller.abort(); clearInterval(timer);
       socket.removeAllListeners(); socket.disconnect();
     };
   }, [token, refresh, logout]);
@@ -174,22 +242,9 @@ export default function App() {
         </section>
         <section>
           <h2 className="text-lg font-semibold">Connected phones</h2>
-          <p className="mt-1 text-sm text-slate-400">The current APK starts health monitoring after connection and Android notification permission. It sends one sample immediately, then every five minutes. “Idle” between uploads is normal. Check the last sample time.</p>
+          <p className="mt-1 text-sm text-slate-400">The current APK starts health monitoring after connection and Android notification permission. It sends one sample immediately, then every five minutes, while a remote request check runs about every ten seconds. “Silent for …” means monitoring is off or the phone has no network. Disable a phone here to cut it off; rotate its token to revoke the one stored on the device.</p>
           <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {devices.map(device => {
-              const health = device.latest_health ||
-                (device.latest_payload?.type === "system_health" ? device.latest_payload : null);
-              return <article key={device.device_id} className="rounded-xl border border-slate-800 bg-slate-900 p-5">
-                <div className="flex items-start justify-between gap-2"><div><h3 className="font-semibold">{device.name}</h3><p className="text-xs text-slate-400">{device.device_id}</p></div><span className={`text-xs ${device.online ? "text-emerald-300" : "text-slate-400"}`}>{device.online ? "Uploading" : "Idle"}</span></div>
-                <dl className="mt-5 grid grid-cols-2 gap-4 text-sm">
-                  <div><dt className="text-slate-400">Battery</dt><dd className="mt-1 text-xl">{Number.isFinite(health?.battery_percent) ? `${health.battery_percent}%` : "—"}</dd></div>
-                  <div><dt className="text-slate-400">Uptime</dt><dd className="mt-1 text-xl">{uptime(health?.uptime_ms)}</dd></div>
-                  <div className="col-span-2"><dt className="text-slate-400">Phone</dt><dd>{health ? `${health.manufacturer} ${health.model}` : "Waiting for first health sample"}</dd></div>
-                  {health && <div className="col-span-2"><dt className="text-slate-400">Version</dt><dd>Android {health.android_version} (SDK {health.android_sdk}) · App {health.app_version}</dd></div>}
-                  <div className="col-span-2"><dt className="text-slate-400">Last health sample</dt><dd>{time(health?.timestamp)}</dd></div>
-                </dl>
-              </article>;
-            })}
+            {devices.map(device => <DeviceCard key={device.device_id} device={device} api={api} token={token} onChanged={() => setRefresh(value => value + 1)} />)}
           </div>
           {!devices.length && <p className="mt-4 rounded-lg border border-dashed border-slate-700 p-8 text-center text-slate-400">Open the current APK on your phone to connect automatically.</p>}
         </section>

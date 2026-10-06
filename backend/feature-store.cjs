@@ -18,13 +18,39 @@ function createFeatureStore(db, postgres) {
     CREATE INDEX IF NOT EXISTS device_requests_device ON device_requests(device_id, created_at);
     CREATE TABLE IF NOT EXISTS feature_receipts (
       receipt_id TEXT NOT NULL, device_id TEXT NOT NULL REFERENCES devices(device_id),
-      PRIMARY KEY(receipt_id, device_id)
+      created_at TEXT, PRIMARY KEY(receipt_id, device_id)
     );
     CREATE TABLE IF NOT EXISTS enrollment_requests (
       device_id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL, expires_at TEXT NOT NULL
     );`;
-  const ready = postgres ? db.query(schema) : Promise.resolve(db.exec(schema));
+  const ready = (postgres ? db.query(schema) : Promise.resolve(db.exec(schema)))
+    .then(() => addReceiptTimestamp())
+    .catch(async error => {
+      if (postgres) await db.query("ROLLBACK").catch(() => {});
+      throw error;
+    });
+
+  // Additive only: an existing deployment gains the column without losing receipts.
+  async function addReceiptTimestamp() {
+    if (postgres) {
+      const present = await db.query(
+        "SELECT 1 FROM information_schema.columns WHERE table_name = 'feature_receipts' AND column_name = 'created_at'"
+      );
+      if (!present.rowCount) {
+        await db.query("ALTER TABLE feature_receipts ADD COLUMN created_at TEXT");
+        // Store the same ISO-8601 UTC text the runtime writes so retention compares as strings.
+        await db.query(`UPDATE feature_receipts SET created_at =
+          to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') WHERE created_at IS NULL`);
+      }
+      return;
+    }
+    const columns = db.prepare("PRAGMA table_info(feature_receipts)").all();
+    if (!columns.some(column => column.name === "created_at")) {
+      db.exec("ALTER TABLE feature_receipts ADD COLUMN created_at TEXT");
+      db.prepare("UPDATE feature_receipts SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE created_at IS NULL").run();
+    }
+  }
   async function query(sql, values = [], mode = "all") {
     await ready;
     if (postgres) {
@@ -40,7 +66,8 @@ function createFeatureStore(db, postgres) {
   async function saveEvent(device, id, payload) {
     await ready;
     if (!postgres) return db.transaction(() => {
-      const inserted = db.prepare("INSERT INTO feature_receipts(receipt_id,device_id) VALUES (?,?) ON CONFLICT DO NOTHING").run(id, device);
+      const inserted = db.prepare("INSERT INTO feature_receipts(receipt_id,device_id,created_at) VALUES (?,?,?) ON CONFLICT DO NOTHING")
+        .run(id, device, new Date().toISOString());
       if (!inserted.changes) return null;
       const event = db.prepare("INSERT INTO events(device_id,event_type,payload) VALUES (?,'data:receive',?)").run(device, payload);
       db.prepare("UPDATE devices SET last_seen=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE device_id=?").run(device);
@@ -49,7 +76,7 @@ function createFeatureStore(db, postgres) {
     const client = await db.connect();
     try {
       await client.query("BEGIN");
-      const receipt = await client.query("INSERT INTO feature_receipts(receipt_id,device_id) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING receipt_id", [id, device]);
+      const receipt = await client.query("INSERT INTO feature_receipts(receipt_id,device_id,created_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING RETURNING receipt_id", [id, device, new Date().toISOString()]);
       if (!receipt.rowCount) { await client.query("COMMIT"); return null; }
       const event = await client.query("INSERT INTO events(device_id,event_type,payload) VALUES ($1,'data:receive',$2::jsonb) RETURNING id", [device, payload]);
       await client.query("UPDATE devices SET last_seen=CURRENT_TIMESTAMP WHERE device_id=$1", [device]);
@@ -134,6 +161,23 @@ function createFeatureStore(db, postgres) {
       throw error;
     } finally { client.release(); }
   }
-  return { ready, query, saveEvent, saveFile, latestEvents, autoEnroll };
+  // One bounded sweep per interval: history, captured files, idempotency receipts, finished
+  // requests and abandoned enrollment rows are all time-boxed so storage cannot grow forever.
+  async function pruneRetention(cutoff) {
+    const removed = {};
+    removed.events = await query("DELETE FROM events WHERE created_at < ?", [cutoff], "run");
+    // Captured media ages out with its audit trail; leaving the bytes behind would keep the
+    // sensitive part of a record longer than the record itself.
+    removed.files = await query("DELETE FROM shared_files WHERE created_at < ?", [cutoff], "run");
+    removed.receipts = await query("DELETE FROM feature_receipts WHERE created_at IS NULL OR created_at < ?", [cutoff], "run");
+    removed.requests = await query(
+      "DELETE FROM device_requests WHERE status IN ('completed','declined','failed','expired') AND updated_at < ?",
+      [cutoff], "run");
+    removed.enrollments = await query(
+      "DELETE FROM enrollment_requests WHERE status <> 'approved' AND expires_at < ?",
+      [cutoff], "run");
+    return removed;
+  }
+  return { ready, query, saveEvent, saveFile, latestEvents, autoEnroll, pruneRetention };
 }
 module.exports = { createFeatureStore };

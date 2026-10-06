@@ -26,6 +26,10 @@ Retain the currently working **DATABASE_URL**, **DASHBOARD_USERNAME**, **DASHBOA
 
 **No new environment variable is required for automatic joining.** The matching invitation hash is already in installation.cjs. Leave AUTO_ENROLLMENT_KEY_HASH absent to use it. An optional `AUTO_ENROLLMENT_KEY_HASH=disabled` stops new automatic joins while existing devices continue working; remove this override and redeploy to use the bundled invitation again.
 
+**Retention is optional too.** `RETENTION_DAYS` (integer 1–3650, default 30) bounds how long received events, uploaded files, idempotency receipts, finished tool requests and abandoned enrollment requests stay in Neon. The backend sweeps once at startup and then every six hours. Photos, audio and screenshots therefore disappear on the same schedule as the records that describe them — download anything you want to keep from the dashboard's Files panel first. The per-phone quota (100 MiB / 500 files) still bounds storage between sweeps. Add the variable only when the default does not suit you; the extra receipt-timestamp column this version needs is created on startup without losing existing rows.
+
+**Revoking a phone needs no redeploy.** In the dashboard's Connected phones section use **Disable phone** to stop its uploads and pending work immediately (reversible), or **Rotate token** so the credential stored on that device stops working at once; type the newly shown token into the app's Advanced connection settings.
+
 If auto-deploy did not start, choose **Manual Deploy → Deploy latest commit**, then wait for Live. Open:
 
 https://apk-obeb.onrender.com/health

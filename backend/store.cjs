@@ -48,6 +48,13 @@ function createSqliteStore(databasePath) {
       INSERT INTO events (device_id, event_type, payload)
       VALUES (?, ?, ?)
     `),
+    // Rotation alone must not re-enable a disabled device.
+    rotateDeviceToken: db.prepare(`
+      UPDATE devices SET token_hash = ? WHERE device_id = ?
+    `),
+    setDeviceEnabled: db.prepare(`
+      UPDATE devices SET enabled = ? WHERE device_id = ?
+    `),
   };
 
   const saveTelemetry = db.transaction((deviceId, payload) => {
@@ -117,6 +124,9 @@ async function createPostgresStore(databaseUrl) {
     createDevice: statement("INSERT INTO devices (device_id, name, token_hash) VALUES ($1, $2, $3)"),
     touchDevice: statement("UPDATE devices SET last_seen = CURRENT_TIMESTAMP WHERE device_id = $1"),
     insertEvent: statement("INSERT INTO events (device_id, event_type, payload) VALUES ($1, $2, $3::jsonb) RETURNING id"),
+    // Rotation alone must not re-enable a disabled device.
+    rotateDeviceToken: statement("UPDATE devices SET token_hash = $1 WHERE device_id = $2"),
+    setDeviceEnabled: statement("UPDATE devices SET enabled = $1 WHERE device_id = $2"),
   };
   async function saveTelemetry(deviceId, payload) {
     const client = await db.connect();

@@ -5,6 +5,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.drawable.GradientDrawable
 import android.media.MediaPlayer
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
@@ -12,18 +13,13 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.provider.OpenableColumns
 import android.provider.DocumentsContract
 import android.provider.Settings
 import android.widget.*
-import com.example.utility.ScreenMonitorService
-import com.example.utility.backup.SettingsBackupTool
-import com.example.utility.security.SecurityAuditTool
 import com.fleet.tracking.FleetGeofence
 import com.fleet.tracking.LocationTracker
 import com.google.android.gms.common.api.ResolvableApiException
 import kotlinx.coroutines.*
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.time.Instant
@@ -35,7 +31,6 @@ class FeaturesActivity : Activity() {
     private lateinit var status: TextView
     private var camera: CameraController? = null
     private var audio: AudioRecorder? = null
-    private var scanner: EnvironmentScanner? = null
     private var player: MediaPlayer? = null
     private var permissionAction: (() -> Unit)? = null
     private var exportFile: File? = null
@@ -48,23 +43,30 @@ class FeaturesActivity : Activity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 24, 24, 24) }
+        layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(28, 24, 28, 24) }
         setContentView(ScrollView(this).apply { addView(layout) })
-        label("Device tools", 24f)
-        label("Dashboard requests run as soon as they reach the phone while monitoring is on. Camera, microphone, screenshots and file picking still need Android permissions and this visible screen.")
+        label("Device tools", 27f)
+        label("Dashboard requests run as soon as they reach the phone while monitoring is on. A remote photo or microphone recording is captured in the background and never opens this screen; Android still shows its own camera and microphone indicator. Screenshots still need this screen because Android asks for consent there.")
         status = label("")
+        status.setPadding(28, 28, 28, 28)
+        status.background = GradientDrawable().apply {
+            setColor(themeColor(android.R.attr.colorBackground, 0xFFF5F7FA.toInt()))
+            cornerRadius = 16f
+            setStroke(2, themeColor(android.R.attr.textColorSecondary, 0xFF8899AA.toInt()))
+        }
         button("Run pending dashboard requests") { runPendingRequests() }
         button("Cancel active dashboard request") {
             val id = requestId
             requestId = null
             if (id == null) message("No active dashboard request.")
             else {
-                audio?.stopRecording(); recording = false; camera?.close(); scanner?.close()
-                scope.launch(Dispatchers.IO) { runCatching { FeatureBridge.finishRequest(this@FeaturesActivity, id, "declined", "Cancelled on phone") } }
+                audio?.stopRecording(); recording = false; camera?.close()
+                FeatureBridge.awaitLocationResult(null)
+                FeatureBridge.finishRequest(this, id, "declined", "Cancelled on phone")
                 message("Active request cancelled.")
             }
         }
-        label("Camera, microphone and screenshot", 20f)
+        section("Camera, microphone and screenshot")
         label("Photo camera (front by default)")
         val cameraChoice = Spinner(this).apply {
             adapter = ArrayAdapter(this@FeaturesActivity, android.R.layout.simple_spinner_dropdown_item, arrayOf("Front camera", "Rear camera"))
@@ -81,19 +83,34 @@ class FeaturesActivity : Activity() {
         button("Start and share microphone recording") { consent("Record microphone audio while this screen is visible? Each 10-second audio file is uploaded. Tap Stop to finish.") { startAudio() } }
         button("Stop microphone recording") { audio?.stopRecording(); recording = false; refresh() }
         button("Capture and share screenshot") { consent("Android will ask what to share. One screenshot is captured after 5 seconds, then sharing stops. Secure screens remain protected.") { screenshot() } }
-        label("Location and geofences", 20f)
+        section("Location and geofences")
         button("Start sharing location") { consent("Share your GPS location while monitoring is on? An ongoing Android location notification is shown. Stop location or Stop monitoring ends sharing.") { startLocation() } }
         button("Stop location sharing") { FeatureBridge.setLocationApproved(this, false); LocationTracker.stopTracking(); refresh() }
         button("Add geofence") { addGeofence() }
         button("View / remove geofences") { listGeofences() }
-        button("Restore backed-up geofences") { restoreGeofences() }
-        label("Scans, reports and settings", 20f)
+        section("Nearby scan")
         button("Scan and share nearby Wi-Fi / Bluetooth") { consent("Run one nearby Wi-Fi and Bluetooth discovery scan and upload its results? Enable Location, Wi-Fi and Bluetooth first.") { scanEnvironment() } }
-        button("Run local security audit") { audit() }
-        button("Create settings backup") { backup() }
-        button("Restore settings backup") { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).setType("application/json").addCategory(Intent.CATEGORY_OPENABLE), 42) }
-        label("Shared files", 20f)
-        button("Select a file to share") { consent("Select one document with Android's file picker and upload it to your dashboard? Only the selected file is copied, up to 4 MiB.") { pickFile() } }
+        section("Scheduled reports")
+        label("A report you start here repeats on its own while monitoring is on, and stops with monitoring. Only report-only tools can repeat; a camera, microphone or screenshot always stays a one-off choice. A tool the dashboard has turned off stays off.")
+        val cadenceNames = ReportSchedule.intervals.map { minutes ->
+            when (minutes) { 60 -> "Every hour"; 240 -> "Every 4 hours"; else -> "Every $minutes minutes" }
+        }
+        layout.addView(Spinner(this).apply {
+            adapter = ArrayAdapter(this@FeaturesActivity, android.R.layout.simple_spinner_dropdown_item, cadenceNames)
+            setSelection(ReportSchedule.intervals.indexOf(ReportSchedule.intervalMinutes(this@FeaturesActivity)).coerceAtLeast(0))
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                    ReportSchedule.setInterval(this@FeaturesActivity, ReportSchedule.intervals[position])
+                }
+                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            }
+        })
+        ReportSchedule.tools.forEach { tool ->
+            check("Repeat the ${ReportSchedule.label(tool)}", tool in ReportSchedule.enabled(this)) { enabled ->
+                message(ReportSchedule.setEnabled(this, tool, enabled))
+            }
+        }
+        section("Shared files")
         button("Choose / browse a folder") {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION), 45)
         }
@@ -102,6 +119,15 @@ class FeaturesActivity : Activity() {
             AlertDialog.Builder(this).setTitle("Clear pending uploads?").setMessage("This deletes unsent tool reports and uploads from the phone queue. Local saved files and cloud files remain.")
                 .setNegativeButton("Cancel", null).setPositiveButton("Clear") { _, _ -> scope.launch(Dispatchers.IO) { FeatureBridge.clearPending(this@FeaturesActivity) } }.show()
         }
+        label("What the phone shows you", 20f)
+        label("Android always keeps one notice while monitoring runs; these choices only change the extra alerts and the detail line.")
+        check("Alert me when a dashboard request used the camera or microphone", NotificationPresentation.captureAlerts(this)) {
+            NotificationPresentation.setCaptureAlerts(this, it)
+        }
+        check("Show recent uploads in the monitoring notice", NotificationPresentation.detailInOngoing(this)) {
+            NotificationPresentation.setDetailInOngoing(this, it)
+        }
+        button("See what this phone has sent") { showActivityLog() }
         button("Back to monitoring") { finish() }
         handler.postDelayed({ handleAutoRequest(intent) }, 500)
     }
@@ -115,52 +141,54 @@ class FeaturesActivity : Activity() {
         val id = intent?.getStringExtra("auto_request_id") ?: return
         val action = intent.getStringExtra("auto_request_action") ?: return
         if (!CoreService.isSyncReady) {
-            scope.launch(Dispatchers.IO) {
-                runCatching { FeatureBridge.finishRequest(this@FeaturesActivity, id, "failed", "Monitoring not active") }
-            }
+            FeatureBridge.finishRequest(this, id, "failed", "Monitoring not active")
             return
         }
         if (requestId != null) {
-            scope.launch(Dispatchers.IO) {
-                runCatching { FeatureBridge.finishRequest(this@FeaturesActivity, id, "failed", "Phone busy with another request") }
-            }
+            FeatureBridge.finishRequest(this, id, "failed", "Phone busy with another request")
             return
         }
         requestId = id
+        val args = intent.getStringExtra("auto_request_args").orEmpty()
+        // Only tools that need an owner's consent in a visible window arrive here. Photo, microphone,
+        // nearby scan and status are answered by the background loop, so this list and
+        // DeviceCommandRouter's USER set must stay equal; anything else is refused rather than guessed.
         when (action) {
-            "request_photo" -> takePhoto(id)
             "request_screenshot" -> screenshot(id)
-            "request_audio" -> startAudio(id)
             "request_location" -> startLocation(id)
-            "request_scan" -> scanEnvironment(id)
-            "request_audit" -> audit(id)
-            "request_backup" -> backup(id)
-            "request_files" -> pickFile()
-            else -> scope.launch {
-                try {
-                    withContext(Dispatchers.IO) {
-                        FeatureBridge.queueEvent(this@FeaturesActivity, JSONObject()
-                            .put("type", "device_status").put("timestamp", Instant.now().toString())
-                            .put("monitoring", CoreService.isRunning)
-                            .put("location", LocationTracker.isTracking.value)
-                            .put("pending_uploads", FeatureBridge.pendingCount(this@FeaturesActivity)))
-                    }
-                    complete("Phone status queued for upload.", id)
-                } catch (e: Exception) { fail(e.message ?: "Status upload failed", id) }
-            }
+            "request_geofence" -> dashboardGeofence(id, args)
+            else -> fail("Phone build does not run $action from this screen.", id)
         }
     }
 
-    private fun label(text: String, size: Float = 16f): TextView = TextView(this).apply {
+    private fun label(text: String, size: Float = 17f): TextView = TextView(this).apply {
         this.text = text; textSize = size; setPadding(0, 12, 0, 12); this@FeaturesActivity.layout.addView(this)
+    }
+    private fun section(text: String): TextView = TextView(this).apply {
+        this.text = text; textSize = 21f; setPadding(0, 28, 0, 4)
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
+        this@FeaturesActivity.layout.addView(this)
     }
     private fun button(text: String, action: () -> Unit) {
         layout.addView(Button(this).apply { this.text = text; setOnClickListener { action() } })
     }
+    private fun check(text: String, initial: Boolean, onChange: (Boolean) -> Unit) {
+        layout.addView(CheckBox(this).apply {
+            this.text = text; isChecked = initial
+            setOnCheckedChangeListener { _, checked -> onChange(checked) }
+        })
+    }
+    private fun showActivityLog() {
+        val entries = NotificationPresentation.activityLog(this)
+        val body = if (entries.isEmpty()) "Nothing has reached the dashboard yet in this monitoring session."
+        else entries.joinToString("\n") { "${it.optString("time")} · ${it.optString("label")}" }
+        AlertDialog.Builder(this).setTitle("Uploads this phone delivered")
+            .setMessage(body).setPositiveButton("Close", null).show()
+    }
     private fun message(text: String) { Toast.makeText(this, text, Toast.LENGTH_LONG).show(); status.text = text }
     private fun refresh() {
         if (!CoreService.isSyncReady && recording) { audio?.stopRecording(); recording = false }
-        if (::status.isInitialized) status.text = "Monitoring: ${CoreService.isRunning}\nLocation: ${LocationTracker.isTracking.value}\nMicrophone: ${if (recording) "recording" else "off"}\n${FeatureBridge.status}\nPending tool uploads: ${FeatureBridge.pendingCount(this)}\nUnsent items kept aside: ${FeatureBridge.failedCount(this)}\nPending dashboard requests: ${FeatureBridge.pendingRequests(this).size}"
+        if (::status.isInitialized) status.text = "Monitoring: ${CoreService.isRunning}\nLocation: ${LocationTracker.isTracking.value}\nMicrophone: ${if (recording) "recording" else "off"}\n${FeatureBridge.status}\nPending tool uploads: ${FeatureBridge.pendingCount(this)}\nUnsent items kept aside: ${FeatureBridge.failedCount(this)}\nPending dashboard requests: ${FeatureBridge.pendingRequests(this).size}\nDashboard rules: ${RemotePolicy.summary(this) ?: "none; this phone's choices govern"}\nScheduled reports: ${ReportSchedule.summary(this) ?: "none"}"
     }
     private fun consent(text: String, action: () -> Unit) {
         if (requestId != null) { message("Finish or cancel the active dashboard request first."); return }
@@ -181,15 +209,26 @@ class FeaturesActivity : Activity() {
             handler.postDelayed({ if (!isFinishing && !isDestroyed) action?.invoke() }, 350)
         } else { fail("Required permission denied. You can enable it in app settings.") }
     }
-    private fun complete(detail: String, id: String? = requestId) {
-        if (id == null) return
-        if (requestId == id) requestId = null
-        scope.launch(Dispatchers.IO) { runCatching { FeatureBridge.finishRequest(this@FeaturesActivity, id, "completed", detail) } }
+    /** Tells the dashboard the phone is working, so a 35-second scan is not mistaken for a freeze. */
+    private fun running(detail: String, id: String?) {
+        if (id != null) FeatureBridge.finishRequest(this, id, "running", detail)
     }
     private fun fail(text: String, id: String? = requestId) {
         message(text); recording = false
         if (requestId == id) requestId = null
-        if (id != null) scope.launch(Dispatchers.IO) { runCatching { FeatureBridge.finishRequest(this@FeaturesActivity, id, "failed", text) } }
+        if (id != null) FeatureBridge.finishRequest(this, id, "failed", text)
+    }
+    /** The owner said no, which is not a failure and must not look like one on the dashboard. */
+    private fun cancelled(text: String, id: String? = requestId) {
+        message(text)
+        if (requestId == id) requestId = null
+        if (id != null) FeatureBridge.finishRequest(this, id, "declined", text)
+    }
+    /** For a tool whose whole output is a change on the phone, such as a watched boundary. */
+    private fun completed(text: String, id: String? = requestId) {
+        message(text)
+        if (requestId == id) requestId = null
+        if (id != null) FeatureBridge.finishRequest(this, id, "completed", text)
     }
     private fun share(file: File, mime: String, kind: String, deleteTemp: Boolean = true, remote: String? = null) {
         // Saving a completed microphone chunk must survive the Activity being closed.
@@ -197,11 +236,12 @@ class FeaturesActivity : Activity() {
         if (requestId == remote) requestId = null
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                FeatureBridge.queueFile(app, file, file.name, mime, kind)
-                if (remote != null) FeatureBridge.finishRequest(app, remote, "completed", "$kind output saved to phone upload queue. Confirm delivery in dashboard Files.")
+                FeatureBridge.queueFile(app, file, file.name, mime, kind, remote,
+                    "$kind uploaded to the dashboard Files.")
                 withContext(Dispatchers.Main) { if (!isDestroyed) message("$kind saved and queued. Start monitoring to upload.") }
-            } catch (e: Exception) {
-                if (remote != null) runCatching { FeatureBridge.finishRequest(app, remote, "failed", "Output could not be queued") }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                if (remote != null) FeatureBridge.finishRequest(app, remote, "failed", "Output could not be queued on the phone")
                 withContext(Dispatchers.Main) { if (!isDestroyed) fail(e.message ?: "Could not save output", null) }
             } finally { if (deleteTemp) file.delete() }
         }
@@ -223,6 +263,7 @@ class FeaturesActivity : Activity() {
         if (remote != null) handler.postDelayed({ audio?.stopRecording(); recording = false }, 15_000)
     }
     private fun screenshot(remote: String? = null) {
+        running("Android is asking which screen to share…", remote)
         projectionRequest = remote
         val manager = getSystemService(MediaProjectionManager::class.java)
         startActivityForResult(manager.createScreenCaptureIntent(), 40)
@@ -234,13 +275,21 @@ class FeaturesActivity : Activity() {
             val result = LocationTracker.checkLocationSettings()
             val error = result.exceptionOrNull()
             if (error is ResolvableApiException) { error.startResolutionForResult(this@FeaturesActivity, 43); return@launch }
-            if (error != null) { fail("Enable precise location and GPS, then try again."); return@launch }
+            if (error != null) { fail("Enable precise location and GPS, then try again.", remote); return@launch }
             try {
                 FeatureBridge.setLocationApproved(this@FeaturesActivity, true)
+                // A dashboard request is answered by the first fix that reaches the server, not by
+                // starting the tracker, so an indoor phone with no fix never looks like a delivery.
+                FeatureBridge.awaitLocationResult(remote)
                 LocationTracker.startTracking()
-                complete("Location sharing started on phone. Await a fresh GPS fix in the dashboard.", remote)
-                message("Location sharing started; waiting for an accurate GPS fix.")
-            } catch (e: Exception) { FeatureBridge.setLocationApproved(this@FeaturesActivity, false); fail(e.message ?: "Location unavailable") }
+                running("Location sharing started; waiting for the first GPS fix.", remote)
+                message("Location sharing started; the dashboard waits for an accurate GPS fix.")
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                FeatureBridge.setLocationApproved(this@FeaturesActivity, false)
+                FeatureBridge.awaitLocationResult(null)
+                fail(e.message ?: "Location unavailable", remote)
+            }
         }
     }
     private fun addGeofence() {
@@ -274,6 +323,41 @@ class FeaturesActivity : Activity() {
             }; dialog.show()
         }
     }
+    /** A boundary the dashboard proposed. Android watches it only after the owner agrees here. */
+    private fun dashboardGeofence(remote: String?, args: String) {
+        val fence = runCatching {
+            val asked = JSONObject(args)
+            FleetGeofence(asked.getString("name"), asked.getDouble("latitude"),
+                asked.getDouble("longitude"), asked.getDouble("radius_meters").toFloat())
+        }.getOrNull()
+        if (fence == null) { fail("The dashboard sent a boundary this phone cannot read.", remote); return }
+        permitted(locationPermissions) {
+            if (!LocationTracker.hasBackgroundLocationPermission()) {
+                fail("Grant Location → Allow all the time on the phone, then retry from the dashboard.", remote)
+                return@permitted
+            }
+            val dialog = AlertDialog.Builder(this).setTitle("Dashboard asks you to watch an area")
+                .setMessage("${fence.id}\n${fence.latitude}, ${fence.longitude} · ${fence.radiusMeters.toInt()} m radius\n\n" +
+                    "Allowing this makes the phone track that boundary in the background. Crossings reach your dashboard only while location sharing is running, and you can remove the boundary under View / remove geofences.")
+                .setNegativeButton("Decline", null).setPositiveButton("Allow", null).create()
+            dialog.setOnShowListener {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                    dialog.dismiss()
+                    scope.launch {
+                        LocationTracker.addGeofence(fence).fold(
+                            { completed("Boundary “${fence.id}” is watched on this phone.", remote) },
+                            { fail(it.message ?: "Geofence registration failed", remote) }
+                        )
+                    }
+                }
+                dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
+                    dialog.dismiss(); cancelled("Declined the dashboard's boundary on the phone.", remote)
+                }
+            }
+            dialog.setOnCancelListener { cancelled("Closed the dashboard's boundary request without answering.", remote) }
+            dialog.show()
+        }
+    }
     private fun listGeofences() {
         val list = LocationTracker.registeredGeofences()
         if (list.isEmpty()) { message("No geofences registered."); return }
@@ -292,53 +376,28 @@ class FeaturesActivity : Activity() {
         val permissions = locationPermissions.toMutableList()
         if (Build.VERSION.SDK_INT >= 31) permissions += listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
         permitted(permissions.toTypedArray()) {
-            scanner?.close(); scanner = EnvironmentScanner(this)
-            message("Scanning; this may take 30 seconds…")
-            scanner?.scan({ result ->
-                result.put("type", "environment_scan").put("timestamp", Instant.now().toString())
-                scope.launch {
-                    try { withContext(Dispatchers.IO) { FeatureBridge.queueEvent(this@FeaturesActivity, result) }; complete("Nearby scan queued for upload.", remote); showReport("Nearby scan", result, "document", false) }
-                    catch (e: Exception) { fail(e.message ?: "Could not queue scan") }
+            running("Scanning nearby Wi-Fi and Bluetooth…", remote)
+            message("Scanning; this may take up to 35 seconds…")
+            scope.launch {
+                try {
+                    val result = HeadlessScan.scan(this@FeaturesActivity)
+                        .put("type", "environment_scan").put("timestamp", Instant.now().toString())
+                    withContext(Dispatchers.IO) { FeatureBridge.queueEvent(this@FeaturesActivity, result, remote, "Nearby scan uploaded.") }
+                    showReport("Nearby scan", result, "document")
                 }
-            }, { fail(it.message ?: "Scan unavailable. Enable Wi-Fi, Bluetooth and Location.", remote) })
+                catch (e: CancellationException) { throw e }
+                catch (e: Exception) { fail(e.message ?: "Scan unavailable. Enable Wi-Fi, Bluetooth and Location.", remote) }
+            }
         }
     }
-    private fun audit(remote: String? = null) {
-        scope.launch {
-            try {
-                message("Scanning this app's own data for possible exposed secrets…")
-                val report = SecurityAuditTool(this@FeaturesActivity).scanAppDirectories()
-                showReport("Local security audit (redacted)", report, "audit", true, remote)
-            } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { fail("Audit failed: ${e.javaClass.simpleName}") }
-        }
-    }
-    private fun backup(remote: String? = null) {
-        scope.launch {
-            val report = SettingsBackupTool(this@FeaturesActivity).backupAppSettings(packageName, listOf(ScreenMonitorService.PREFS_NAME))
-            val packages = getSharedPreferences(ScreenMonitorService.PREFS_NAME, 0).getStringSet(ScreenMonitorService.KEY_ALLOWED_PACKAGES, emptySet()).orEmpty().sorted()
-            val geofences = JSONArray(LocationTracker.registeredGeofences().map {
-                JSONObject().put("id", it.id).put("latitude", it.latitude).put("longitude", it.longitude).put("radius_meters", it.radiusMeters)
-            })
-            val allApps = getSharedPreferences(ScreenMonitorService.PREFS_NAME, 0).getBoolean(ScreenMonitorService.KEY_ALL_APPS, false)
-            report.put("format", "system-health-settings-v1").put("approved_packages", JSONArray(packages)).put("all_apps", allApps).put("geofences", geofences)
-            // No enrollment credentials, activation state, or private settings of other apps.
-            report.getJSONObject("settings").optJSONObject(ScreenMonitorService.PREFS_NAME)?.remove(ScreenMonitorService.KEY_ENABLED)
-            showReport("Settings backup", report, "backup", true, remote)
-        }
-    }
-    private fun showReport(title: String, report: JSONObject, kind: String, shareable: Boolean, remote: String? = null) {
+    private fun showReport(title: String, report: JSONObject, kind: String) {
         val view = TextView(this).apply { text = report.toString(2); setPadding(24,24,24,24); setTextIsSelectable(true) }
-        val dialog = AlertDialog.Builder(this).setTitle(title).setView(ScrollView(this).apply { addView(view) }).setNegativeButton("Close") { _, _ -> if (remote != null) { complete("Report reviewed locally; no output shared.", remote) } }
+        // Reading or exporting a report on the phone shares nothing beyond what already ran.
         val temp = File(cacheDir, "${kind}-${System.currentTimeMillis()}.json").apply { writeText(report.toString(2)) }
-        dialog.setNeutralButton("Export") { _, _ -> export(temp, "application/json", temp.name); complete("Report reviewed locally; chose export instead of upload.", remote) }
-        if (shareable) dialog.setPositiveButton("Share report") { _, _ ->
-            if (CoreService.isSyncReady) share(temp, "application/json", kind, false, remote) else message("Start monitoring before sharing the report.")
-        }
-        dialog.show()
-    }
-    private fun pickFile() {
-        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE), 41)
+        AlertDialog.Builder(this).setTitle(title).setView(ScrollView(this).apply { addView(view) })
+            .setNegativeButton("Close", null)
+            .setNeutralButton("Export") { _, _ -> export(temp, "application/json", temp.name) }
+            .show()
     }
     private fun export(file: File, mime: String, name: String) {
         exportFile = file
@@ -406,8 +465,11 @@ class FeaturesActivity : Activity() {
     }
     override fun onActivityResult(code: Int, result: Int, data: Intent?) {
         super.onActivityResult(code, result, data)
-        if (code == 43) { if (result == RESULT_OK) startLocation(requestId) else fail("GPS setup cancelled."); return }
-        if (result != RESULT_OK || data == null) { if (code == 40 || code == 41) fail("Capture or file selection cancelled."); return }
+        if (code == 43) { if (result == RESULT_OK) startLocation(requestId) else cancelled("GPS setup cancelled.") ; return }
+        if (result != RESULT_OK || data == null) {
+            if (code == 40) cancelled("Screen sharing declined; no screenshot was taken.")
+            return
+        }
         if (code == 40) {
             val service = Intent(this, ScreenCaptureService::class.java).putExtra("result_code", result).putExtra("projection_data", data).putExtra("request_id", projectionRequest)
             if (requestId == projectionRequest) requestId = null
@@ -426,31 +488,15 @@ class FeaturesActivity : Activity() {
             } catch (_: Exception) { message("Could not open this folder. Select an accessible folder in Android's picker.") }
             return
         }
-        if (code == 42) CoreService.disableAppCapture(this)
+        if (code != 44) return
         scope.launch {
             try {
-                if (code == 44) {
-                    val source = exportFile ?: error("Export source missing")
-                    withContext(Dispatchers.IO) { contentResolver.openOutputStream(uri)?.use { output -> source.inputStream().use { it.copyTo(output) } } ?: error("Cannot write selected destination") }
-                    message("File exported."); exportFile = null; return@launch
-                }
-                val source = withContext(Dispatchers.IO) {
-                    val bytes = contentResolver.openInputStream(uri)?.use { readBounded(it) } ?: error("Cannot read selected file")
-                    require(bytes.isNotEmpty() && bytes.size <= FeatureBridge.MAX_FILE) { "Choose a file up to 4 MiB" }
-                    if (code == 42) { restore(JSONObject(String(bytes, Charsets.UTF_8))); null }
-                    else {
-                        var name = "document-${System.currentTimeMillis()}"
-                        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) name = it.getString(0) ?: name }
-                        val file = File(cacheDir, "document-${System.currentTimeMillis()}.tmp").apply { writeBytes(bytes) }
-                        try { FeatureBridge.queueFile(this@FeaturesActivity, file, name, contentResolver.getType(uri)?.takeIf { Regex("[\\w.+-]+/[\\w.+-]+").matches(it) } ?: "application/octet-stream", "document") }
-                        finally { file.delete() }
-                        file
-                    }
-                }
-                if (code == 42) message("App sharing selection restored. Sharing stays off until you approve it. Tap Restore backed-up geofences to register saved boundaries.")
-                else if (source != null) { complete("Selected document queued for upload."); message("Selected file queued for upload.") }
+                val source = exportFile ?: error("Export source missing")
+                withContext(Dispatchers.IO) { contentResolver.openOutputStream(uri)?.use { output -> source.inputStream().use { it.copyTo(output) } } ?: error("Cannot write selected destination") }
+                message("File exported.")
+                exportFile = null
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { fail(e.message ?: "File operation failed") }
+            catch (e: Exception) { exportFile = null; fail(e.message ?: "File export failed", null) }
         }
     }
     private fun readBounded(input: java.io.InputStream): ByteArray {
@@ -464,44 +510,10 @@ class FeaturesActivity : Activity() {
         require(output.size() <= FeatureBridge.MAX_FILE) { "Choose a file up to 4 MiB" }
         return output.toByteArray()
     }
-    private fun restore(report: JSONObject) {
-        require(report.getString("format") == "system-health-settings-v1" && report.getString("package_name") == packageName) { "Choose a System Health settings backup" }
-        val array = report.getJSONArray("approved_packages"); require(array.length() <= 100)
-        val packages = (0 until array.length()).map { array.getString(it) }.toSet()
-        require(packages.all { Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+").matches(it) && it != packageName && it != "android" && (!it.startsWith("com.android.") || it == "com.android.chrome") }) { "Backup contains invalid app IDs" }
-        val fences = report.optJSONArray("geofences") ?: JSONArray()
-        require(fences.length() <= 100) { "Too many geofences in backup" }
-        for (i in 0 until fences.length()) decodeFence(fences.getJSONObject(i))
-        check(getSharedPreferences("feature_options", 0).edit().putString("geofence_restore", fences.toString()).commit())
-        // Restore selection only. Consent and runtime permissions are never restored from a file.
-        getSharedPreferences(ScreenMonitorService.PREFS_NAME, 0).edit()
-            .putStringSet(ScreenMonitorService.KEY_ALLOWED_PACKAGES, packages)
-            .putBoolean(ScreenMonitorService.KEY_ALL_APPS, report.optBoolean("all_apps", false))
-            .putBoolean(ScreenMonitorService.KEY_ENABLED, false).commit()
-    }
-    private fun decodeFence(json: JSONObject): FleetGeofence {
-        val id = json.getString("id"); val radius = json.getDouble("radius_meters").toFloat()
-        require(id.isNotBlank() && id.length <= 80 && radius in 100f..10000f) { "Invalid geofence in backup" }
-        return FleetGeofence(id, json.getDouble("latitude"), json.getDouble("longitude"), radius)
-    }
-    private fun restoreGeofences() {
-        if (!CoreService.isSyncReady) { message("Start monitoring first."); return }
-        if (!LocationTracker.hasFineLocationPermission() || !LocationTracker.hasBackgroundLocationPermission()) {
-            message("Grant precise and Allow all the time location permission using Add geofence first, then restore."); return
-        }
-        val array = JSONArray(getSharedPreferences("feature_options", 0).getString("geofence_restore", "[]"))
-        if (array.length() == 0) { message("No geofence definitions waiting to restore."); return }
-        val fences = (0 until array.length()).map { decodeFence(array.getJSONObject(it)) }
-        AlertDialog.Builder(this).setTitle("Register ${fences.size} backed-up geofences?")
-            .setMessage("These saved boundaries will be merged by name with existing geofences. Sharing requires Start location sharing.")
-            .setNegativeButton("Cancel", null).setPositiveButton("Register") { _, _ -> scope.launch {
-                LocationTracker.addGeofences(fences).fold({
-                    getSharedPreferences("feature_options", 0).edit().remove("geofence_restore").apply(); message("Geofences restored.")
-                }, { fail(it.message ?: "Geofence restore failed") })
-            } }.show()
-    }
     private fun runPendingRequests() {
+        // Rules arrive from the background loop, so offering to run one again here would be misleading.
         val requests = FeatureBridge.pendingRequests(this)
+            .filter { it.getString("action") != "request_settings" }
         if (requests.isEmpty()) { message("No pending requests. Monitoring checks the server every 10 seconds."); return }
         if (requestId != null || recording) { message("Finish the active request or recording first."); return }
         AlertDialog.Builder(this).setTitle("Dashboard requests")
@@ -515,14 +527,15 @@ class FeaturesActivity : Activity() {
                     "request_audio" -> startAudio(id)
                     "request_location" -> startLocation(id)
                     "request_scan" -> scanEnvironment(id)
-                    "request_audit" -> audit(id)
-                    "request_backup" -> backup(id)
-                    "request_files" -> pickFile()
+                    "request_geofence" -> dashboardGeofence(id, item.optJSONObject("args")?.toString() ?: "{}")
                     else -> scope.launch {
+                        running("Reading phone status…", id)
                         try {
-                            withContext(Dispatchers.IO) { FeatureBridge.queueEvent(this@FeaturesActivity, JSONObject().put("type", "device_status").put("timestamp", Instant.now().toString()).put("monitoring", CoreService.isRunning).put("location", LocationTracker.isTracking.value).put("pending_uploads", FeatureBridge.pendingCount(this@FeaturesActivity))) }
-                            complete("Phone status queued for upload.")
-                        } catch (e: Exception) { fail(e.message ?: "Status upload failed") }
+                            withContext(Dispatchers.IO) {
+                                FeatureBridge.queueEvent(this@FeaturesActivity, FeatureBridge.deviceStatus(this@FeaturesActivity), id, "Phone status uploaded.")
+                            }
+                        } catch (e: CancellationException) { throw e }
+                        catch (e: Exception) { fail(e.message ?: "Status upload failed", id) }
                     }
                 }
             }.setNegativeButton("Close", null).show()
@@ -530,11 +543,12 @@ class FeaturesActivity : Activity() {
     override fun onResume() { super.onResume(); handler.post(refresher) }
     override fun onPause() {
         handler.removeCallbacks(refresher); audio?.stopRecording(); recording = false
+        camera?.close()
         player?.release(); player = null
         super.onPause()
     }
     override fun onDestroy() {
-        handler.removeCallbacksAndMessages(null); camera?.close(); audio?.close(); scanner?.close(); player?.release(); scope.cancel()
+        handler.removeCallbacksAndMessages(null); camera?.close(); audio?.close(); player?.release(); scope.cancel()
         super.onDestroy()
     }
 }

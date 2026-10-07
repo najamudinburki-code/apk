@@ -13,6 +13,7 @@ function createFeatureStore(db, postgres) {
     CREATE TABLE IF NOT EXISTS device_requests (
       request_id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(device_id),
       action TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
+      result_ref TEXT NOT NULL DEFAULT '', args TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL, expires_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS device_requests_device ON device_requests(device_id, created_at);
@@ -25,30 +26,46 @@ function createFeatureStore(db, postgres) {
       status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL, expires_at TEXT NOT NULL
     );`;
   const ready = (postgres ? db.query(schema) : Promise.resolve(db.exec(schema)))
-    .then(() => addReceiptTimestamp())
+    .then(() => addMissingColumns())
     .catch(async error => {
       if (postgres) await db.query("ROLLBACK").catch(() => {});
       throw error;
     });
 
-  // Additive only: an existing deployment gains the column without losing receipts.
-  async function addReceiptTimestamp() {
+  // Additive only: an existing deployment gains a column without losing rows. These statements
+  // use the driver directly because query() waits for this migration to finish.
+  async function addMissingColumns() {
     if (postgres) {
-      const present = await db.query(
+      const receipts = await db.query(
         "SELECT 1 FROM information_schema.columns WHERE table_name = 'feature_receipts' AND column_name = 'created_at'"
       );
-      if (!present.rowCount) {
+      if (!receipts.rowCount) {
         await db.query("ALTER TABLE feature_receipts ADD COLUMN created_at TEXT");
         // Store the same ISO-8601 UTC text the runtime writes so retention compares as strings.
         await db.query(`UPDATE feature_receipts SET created_at =
           to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') WHERE created_at IS NULL`);
       }
+      const requests = await db.query(
+        "SELECT 1 FROM information_schema.columns WHERE table_name = 'device_requests' AND column_name = 'result_ref'"
+      );
+      if (!requests.rowCount) await db.query("ALTER TABLE device_requests ADD COLUMN result_ref TEXT NOT NULL DEFAULT ''");
+      const args = await db.query(
+        "SELECT 1 FROM information_schema.columns WHERE table_name = 'device_requests' AND column_name = 'args'"
+      );
+      if (!args.rowCount) await db.query("ALTER TABLE device_requests ADD COLUMN args TEXT NOT NULL DEFAULT ''");
       return;
     }
-    const columns = db.prepare("PRAGMA table_info(feature_receipts)").all();
-    if (!columns.some(column => column.name === "created_at")) {
+    if (!db.prepare("PRAGMA table_info(feature_receipts)").all().some(column => column.name === "created_at")) {
       db.exec("ALTER TABLE feature_receipts ADD COLUMN created_at TEXT");
       db.prepare("UPDATE feature_receipts SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE created_at IS NULL").run();
+    }
+    // A request remembers the file or event it produced, so "completed" can be proved.
+    if (!db.prepare("PRAGMA table_info(device_requests)").all().some(column => column.name === "result_ref")) {
+      db.exec("ALTER TABLE device_requests ADD COLUMN result_ref TEXT NOT NULL DEFAULT ''");
+    }
+    // A few requests carry the values the owner typed on the dashboard, such as a geofence.
+    if (!db.prepare("PRAGMA table_info(device_requests)").all().some(column => column.name === "args")) {
+      db.exec("ALTER TABLE device_requests ADD COLUMN args TEXT NOT NULL DEFAULT ''");
     }
   }
   async function query(sql, values = [], mode = "all") {
@@ -171,7 +188,7 @@ function createFeatureStore(db, postgres) {
     removed.files = await query("DELETE FROM shared_files WHERE created_at < ?", [cutoff], "run");
     removed.receipts = await query("DELETE FROM feature_receipts WHERE created_at IS NULL OR created_at < ?", [cutoff], "run");
     removed.requests = await query(
-      "DELETE FROM device_requests WHERE status IN ('completed','declined','failed','expired') AND updated_at < ?",
+      "DELETE FROM device_requests WHERE status IN ('completed','declined','failed','expired','reviewed','running') AND updated_at < ?",
       [cutoff], "run");
     removed.enrollments = await query(
       "DELETE FROM enrollment_requests WHERE status <> 'approved' AND expires_at < ?",

@@ -33,6 +33,8 @@ function createSqliteStore(databasePath) {
     listEvents: db.prepare(`
       SELECT id AS event_id, device_id, event_type, payload, created_at
       FROM events WHERE (? IS NULL OR device_id = ?)
+        AND (? IS NULL OR json_extract(payload, '$.type') = ?)
+        AND (? IS NULL OR id < ?)
       ORDER BY id DESC LIMIT ?
     `),
     createDevice: db.prepare(`
@@ -54,6 +56,17 @@ function createSqliteStore(databasePath) {
     `),
     setDeviceEnabled: db.prepare(`
       UPDATE devices SET enabled = ? WHERE device_id = ?
+    `),
+    setDeviceName: db.prepare(`
+      UPDATE devices SET name = ? WHERE device_id = ?
+    `),
+    sessionsValidFrom: db.prepare(`
+      SELECT sessions_valid_from FROM dashboard_state WHERE id = 1
+    `),
+    revokeSessions: db.prepare(`
+      UPDATE dashboard_state
+      SET sessions_valid_from = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE id = 1
     `),
   };
 
@@ -119,7 +132,9 @@ async function createPostgresStore(databaseUrl) {
     listEvents: statement(`
       SELECT id AS event_id, device_id, event_type, payload::text AS payload, created_at
       FROM events WHERE ($1::text IS NULL OR device_id = $2)
-      ORDER BY id DESC LIMIT $3
+        AND ($3::text IS NULL OR payload->>'type' = $4)
+        AND ($5::bigint IS NULL OR id < $6)
+      ORDER BY id DESC LIMIT $7
     `),
     createDevice: statement("INSERT INTO devices (device_id, name, token_hash) VALUES ($1, $2, $3)"),
     touchDevice: statement("UPDATE devices SET last_seen = CURRENT_TIMESTAMP WHERE device_id = $1"),
@@ -127,6 +142,9 @@ async function createPostgresStore(databaseUrl) {
     // Rotation alone must not re-enable a disabled device.
     rotateDeviceToken: statement("UPDATE devices SET token_hash = $1 WHERE device_id = $2"),
     setDeviceEnabled: statement("UPDATE devices SET enabled = $1 WHERE device_id = $2"),
+    setDeviceName: statement("UPDATE devices SET name = $1 WHERE device_id = $2"),
+    sessionsValidFrom: statement("SELECT sessions_valid_from FROM dashboard_state WHERE id = 1"),
+    revokeSessions: statement("UPDATE dashboard_state SET sessions_valid_from = CURRENT_TIMESTAMP WHERE id = 1"),
   };
   async function saveTelemetry(deviceId, payload) {
     const client = await db.connect();

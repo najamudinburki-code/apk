@@ -1,8 +1,7 @@
 package com.example.systemhealth
 
 import android.Manifest
-import android.app.Activity
-import android.app.Application
+import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
@@ -11,7 +10,6 @@ import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.media.MediaRecorder
-import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -19,11 +17,12 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 // minSdk 23; compileSdk 35+. Declare and request RECORD_AUDIO before starting.
-// Invoke from the visible recording UI. Leaving the activity stops recording.
+// Android only grants microphone access to a visible app or to a foreground service that declared the
+// microphone subtype, so headless callers run from HeadlessCapture inside that service's process.
 // AAC is not MP3: each completed chunk is AAC-LC inside a .m4a container.
 // Callbacks run on the main thread. stopRecording() finalizes a shorter last chunk.
 class AudioRecorder(
-    private val activity: Activity,
+    private val context: Context,
     private val onChunkReady: (File) -> Unit,
     private val onError: (Exception) -> Unit
 ) : AutoCloseable {
@@ -33,30 +32,15 @@ class AudioRecorder(
     @Volatile private var worker: Thread? = null
     private var closed = false
 
-    private val lifecycle = object : Application.ActivityLifecycleCallbacks {
-        override fun onActivityPaused(a: Activity) { if (a === activity) stopRecording() }
-        override fun onActivityDestroyed(a: Activity) { if (a === activity) close() }
-        override fun onActivityCreated(a: Activity, state: Bundle?) = Unit
-        override fun onActivityStarted(a: Activity) = Unit
-        override fun onActivityResumed(a: Activity) = Unit
-        override fun onActivityStopped(a: Activity) = Unit
-        override fun onActivitySaveInstanceState(a: Activity, state: Bundle) = Unit
-    }
-
     init {
         check(Looper.myLooper() == Looper.getMainLooper())
-        activity.application.registerActivityLifecycleCallbacks(lifecycle)
     }
 
     fun startRecording() {
         check(Looper.myLooper() == Looper.getMainLooper())
         if (closed) { onError(IllegalStateException("Recorder is closed")); return }
         if (worker != null) return
-        if (activity.isFinishing || activity.isDestroyed || !activity.hasWindowFocus()) {
-            onError(IllegalStateException("A visible recording activity is required"))
-            return
-        }
-        if (activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+        if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
             PackageManager.PERMISSION_GRANTED) {
             onError(SecurityException("RECORD_AUDIO permission denied"))
             return
@@ -113,7 +97,7 @@ class AudioRecorder(
     }
 
     private fun encodeChunk(input: AudioRecord): File? {
-        val file = File.createTempFile("audio_chunk_", ".m4a", activity.cacheDir)
+        val file = File.createTempFile("audio_chunk_", ".m4a", context.cacheDir)
         var encoder: MediaCodec? = null
         var muxer: MediaMuxer? = null
         var muxerStarted = false
@@ -217,7 +201,6 @@ class AudioRecorder(
         if (closed) return
         closed = true
         stopRecording()
-        activity.application.unregisterActivityLifecycleCallbacks(lifecycle)
     }
 
     companion object { private const val SAMPLE_RATE = 44_100 }

@@ -1,10 +1,8 @@
-# Release shrinking is enabled in build.gradle.kts. The Socket.IO client reaches OkHttp's
-# platform TLS helpers reflectively, so both libraries keep their public surface.
--keep class io.socket.** { *; }
--keep class okhttp3.** { *; }
--keep class okio.** { *; }
--dontwarn okhttp3.**
--dontwarn okio.**
--dontwarn org.conscrypt.**
--dontwarn org.bouncycastle.**
--dontwarn org.openjsse.**
+# Release shrinking is enabled in build.gradle.kts. The phone talks to the backend with
+# HttpURLConnection and org.json, both provided by Android, so nothing is kept reflectively.
+# Play Services contributes its own consumer rules.
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
+
+# A missing class here is a runtime crash the debug build never shows. R8 already writes the
+# deobfuscation map to build/outputs/mapping/release/mapping.txt, so no -printmapping is needed;
+# adding one only duplicates that file into the source tree.

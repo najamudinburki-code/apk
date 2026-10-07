@@ -25,7 +25,7 @@ test("enrollment, authenticated telemetry, live dashboard, and persistence", { t
   const env = { ...process.env, DATABASE_URL: pgTestUrl || "", PG_SSL_MODE: pgTestUrl ? "disable" : "", RENDER: "", PORT: String(port), DATABASE_PATH: database,
     JWT_SECRET: crypto.randomBytes(48).toString("hex"), DASHBOARD_USERNAME: "test-admin",
     AUTO_ENROLLMENT_KEY_HASH: crypto.createHash("sha256").update(installationKey).digest("hex"),
-    DASHBOARD_PASSWORD: password, DASHBOARD_ORIGIN: "http://localhost:5173", TLS_CERT_PATH: "", TLS_KEY_PATH: "", TRUST_PROXY_HOPS: "1" };
+    DASHBOARD_PASSWORD: password, DASHBOARD_ORIGIN: "http://localhost:5173,http://127.0.0.1:5173", TLS_CERT_PATH: "", TLS_KEY_PATH: "", TRUST_PROXY_HOPS: "1" };
   let child;
   const sockets = [];
 
@@ -84,7 +84,7 @@ test("enrollment, authenticated telemetry, live dashboard, and persistence", { t
   }
   try {
     await start();
-    let token, enrollment, dashboard, device, eventId, lastCaptureId;
+    let token, enrollment, dashboard, eventId, lastCaptureId;
     await t.test("public health check returns readiness without exposing credentials", async () => {
       const health = await request("/health");
       assert.equal(health.status, 200);
@@ -96,6 +96,11 @@ test("enrollment, authenticated telemetry, live dashboard, and persistence", { t
       const login = await request("/api/login", "", { username: "test-admin", password });
       assert.equal(login.status, 200); token = login.body.token;
       assert.equal((await request("/api/devices", token, undefined, { Origin: "http://untrusted.example" })).status, 403);
+      // A browser may reach the same dashboard as localhost or 127.0.0.1; both listed origins pass.
+      for (const origin of ["http://localhost:5173", "http://127.0.0.1:5173"]) {
+        assert.equal((await request("/api/devices", token, undefined, { Origin: origin })).status, 200, origin);
+      }
+      assert.equal((await request("/api/devices", token, undefined, { Origin: "http://localhost:5173.evil.example" })).status, 403);
     });
     await t.test("device enrollment issues a token once and rejects duplicates", async () => {
       const result = await request("/api/devices", token, { device_id: "phone-01", name: "Test phone" });
@@ -106,28 +111,38 @@ test("enrollment, authenticated telemetry, live dashboard, and persistence", { t
       assert.equal(roster.body.devices[0].latest_payload, null);
       assert.ok(!("token_hash" in roster.body.devices[0]));
     });
-    await t.test("socket authentication checks device identity and role", async () => {
-      await assert.rejects(connect({ role: "device", device_id: "phone-01", token: "wrong" }), /Unauthorized/);
+    const phoneHeaders = { "X-Device-Id": "phone-01" };
+    const phone = (route, body, headers = phoneHeaders) => request(route, enrollment.device_token, body, headers);
+    await t.test("only the enrolled phone can report, and no phone holds a socket", async () => {
+      const body = { event_id: crypto.randomUUID(), payload: { type: "system_health" } };
+      assert.equal((await request("/api/device/events", enrollment.device_token, body, { "X-Device-Id": "phone-idle" })).status, 401);
+      assert.equal((await request("/api/device/events", "wrong-token", body, phoneHeaders)).status, 401);
+      assert.equal((await request("/api/device/events", token, body, phoneHeaders)).status, 401);
+      // Delivery moved to authenticated HTTP, so even a valid phone token cannot open a socket.
+      await assert.rejects(connect({ role: "device", device_id: "phone-01", token: enrollment.device_token }), /Unauthorized/);
       dashboard = await connect({ role: "dashboard", token });
-      device = await connect({ role: "device", device_id: "phone-01", token: enrollment.device_token });
-      const result = await dashboard.timeout(5000).emitWithAck("data:receive", { type: "system_health" });
-      assert.equal(result.ok, false); assert.match(result.error, /Forbidden/);
     });
-    await t.test("telemetry is saved before acknowledgement and reaches the dashboard", async () => {
+    await t.test("telemetry is saved before the phone is told it arrived and reaches the dashboard", async () => {
       const live = nextEvent(dashboard, "data:received");
-      const payload = { type: "system_health", timestamp: new Date().toISOString(), battery_percent: 73, uptime_ms: 900000, device_id: "spoofed-device" };
-      const ack = await device.timeout(5000).emitWithAck("data:receive", payload);
-      assert.equal(ack.ok, true); eventId = ack.event_id;
+      const payload = { type: "system_health", timestamp: new Date().toISOString(), battery_percent: 73, uptime_ms: 900000 };
+      const sent = await phone("/api/device/events", { event_id: crypto.randomUUID(), payload });
+      assert.equal(sent.status, 200); assert.equal(sent.body.ok, true); eventId = sent.body.event_id;
       const event = await live;
       assert.equal(event.device_id, "phone-01"); assert.equal(event.event_id, eventId); assert.equal(event.payload.battery_percent, 73);
       assert.equal((await request("/api/events?device_id=phone-01&limit=1", token)).body.events[0].event_id, eventId);
       const roster = await request("/api/devices", token);
-      assert.equal(roster.body.devices[0].latest_payload.battery_percent, 73); assert.equal(roster.body.devices[0].online, true);
+      assert.equal(roster.body.devices[0].latest_payload.battery_percent, 73);
+      assert.equal(roster.body.devices[0].online, true);
     });
     await t.test("invalid payloads and invalid event limits are rejected", async () => {
-      for (const value of [null, [], { text: "x".repeat(49 * 1024) }]) assert.equal((await device.timeout(5000).emitWithAck("data:receive", value)).ok, false);
+      for (const value of [undefined, null, [], { text: "x".repeat(49 * 1024) }]) {
+        assert.equal((await phone("/api/device/events", { event_id: crypto.randomUUID(), payload: value })).status, 400);
+      }
+      assert.equal((await phone("/api/device/events", { event_id: "", payload: { type: "system_health" } })).status, 400);
       assert.equal((await request("/api/events?limit=201", token)).status, 400);
       assert.equal((await request("/api/events?device_id=bad%20id", token)).status, 400);
+      assert.equal((await request("/api/events?type=bad%20type", token)).status, 400);
+      assert.equal((await request("/api/events?after=abc", token)).status, 400);
     });
     await t.test("screen and notification payloads preserve the latest health sample", async () => {
       const payloads = [
@@ -139,8 +154,8 @@ test("enrollment, authenticated telemetry, live dashboard, and persistence", { t
       ];
       for (const payload of payloads) {
         const live = nextEvent(dashboard, "data:received");
-        const ack = await device.timeout(5000).emitWithAck("data:receive", payload);
-        assert.equal(ack.ok, true); lastCaptureId = ack.event_id;
+        const sent = await phone("/api/device/events", { event_id: crypto.randomUUID(), payload });
+        assert.equal(sent.status, 200); lastCaptureId = sent.body.event_id;
         const event = await live;
         assert.equal(event.device_id, "phone-01"); assert.deepEqual(event.payload, payload);
       }
@@ -150,9 +165,23 @@ test("enrollment, authenticated telemetry, live dashboard, and persistence", { t
       const history = (await request("/api/events?device_id=phone-01&limit=3", token)).body.events;
       assert.deepEqual(history.map(event => event.payload.type), ["screen_fields", "notification", "screen_text"]);
     });
-    await t.test("device disconnect updates dashboard status", async () => {
-      const status = nextEvent(dashboard, "device:status"); device.disconnect();
-      assert.deepEqual(await status, { device_id: "phone-01", online: false });
+    await t.test("history filters by type and pages backwards without gaps or repeats", async () => {
+      const captures = (await request("/api/events?device_id=phone-01&type=screen_text", token)).body.events;
+      assert.ok(captures.length >= 1);
+      assert.ok(captures.every(event => event.payload.type === "screen_text"));
+      const newest = (await request("/api/events?device_id=phone-01&limit=2", token)).body.events;
+      assert.equal(newest.length, 2);
+      const older = (await request(`/api/events?device_id=phone-01&limit=2&after=${newest[1].event_id}`, token)).body.events;
+      assert.equal(older.length, 2);
+      // A page boundary must neither repeat a row nor drop one that sits between the two pages.
+      assert.ok(older.every(event => newest.every(seen => seen.event_id !== event.event_id)));
+      assert.equal(Number(older[0].event_id), Number(newest[1].event_id) - 1);
+    });
+    await t.test("a phone counts as uploading only while it keeps checking in", async () => {
+      assert.equal((await request("/api/devices", token, { device_id: "phone-idle", name: "Never connected" })).status, 201);
+      const roster = (await request("/api/devices", token)).body.devices;
+      assert.equal(roster.find(device => device.device_id === "phone-01").online, true);
+      assert.equal(roster.find(device => device.device_id === "phone-idle").online, false);
     });
     await t.test("configured reverse proxy keeps login rate limits separate by client", async () => {
       for (let attempt = 0; attempt < 10; attempt++) {
@@ -191,11 +220,9 @@ test("enrollment, authenticated telemetry, live dashboard, and persistence", { t
       assert.equal(history.body.events.length, 4);
       assert.equal(history.body.events[0].event_id, lastCaptureId);
       assert.ok(history.body.events.some(event => event.event_id === eventId));
-      assert.equal((await request("/api/devices", token)).body.devices[0].latest_health.battery_percent, 73);
-      await connect({ role: "device", device_id: "phone-01", token: enrollment.device_token });
+      assert.equal((await request("/api/devices", token)).body.devices
+        .find(device => device.device_id === "phone-01").latest_health.battery_percent, 73);
     });
-    const phoneHeaders = { "X-Device-Id": "phone-01" };
-    const phone = (route, body, headers = phoneHeaders) => request(route, enrollment.device_token, body, headers);
     let fileId, requestId;
     await t.test("feature HTTP routes enforce dashboard and enrolled-device roles", async () => {
       assert.equal((await request("/api/files")).status, 401);
@@ -261,6 +288,112 @@ test("enrollment, authenticated telemetry, live dashboard, and persistence", { t
       assert.equal((await phone("/api/device/requests")).body.requests.length, 0);
       assert.equal((await request("/api/requests?device_id=phone-01", token)).body.requests[0].status, "completed");
     });
+    await t.test("completed is only provable when the phone names the output it delivered", async () => {
+      const issued = await request("/api/requests", token, { device_id: "phone-01", action: "request_scan" });
+      const id = issued.body.request_id;
+      assert.equal((await phone(`/api/device/requests/${id}/result`, { status: "running", detail: "Scan started on phone" })).status, 200);
+      const running = (await request("/api/requests?device_id=phone-01", token)).body.requests.find(row => row.request_id === id);
+      assert.equal(running.status, "running");
+      // A running request is not handed out again, so the phone is never asked to do it twice.
+      assert.deepEqual((await phone("/api/device/requests")).body.requests.map(row => row.request_id), []);
+      const queued = await phone(`/api/device/requests/${id}/result`, { status: "completed", detail: "Scan uploaded", result_ref: `file:${crypto.randomUUID()}` });
+      assert.equal(queued.status, 200);
+      const done = (await request("/api/requests?device_id=phone-01", token)).body.requests.find(row => row.request_id === id);
+      assert.equal(done.status, "completed");
+      assert.match(done.result_ref, /^file:/);
+      // A retried upload must never rewrite a finished request.
+      assert.equal((await phone(`/api/device/requests/${id}/result`, { status: "reviewed", detail: "Late retry" })).body.status, "completed");
+      assert.equal((await request("/api/requests?device_id=phone-01", token)).body.requests.find(row => row.request_id === id).result_ref, done.result_ref);
+      // A report the owner only read is its own state, not a delivery.
+      const reviewed = await request("/api/requests", token, { device_id: "phone-01", action: "request_status" });
+      assert.equal((await phone(`/api/device/requests/${reviewed.body.request_id}/result`, { status: "reviewed", detail: "Report reviewed locally; nothing shared" })).status, 200);
+      assert.equal((await request("/api/requests?device_id=phone-01", token)).body.requests.find(row => row.request_id === reviewed.body.request_id).status, "reviewed");
+      assert.equal((await phone(`/api/device/requests/${reviewed.body.request_id}/result`, { status: "bogus" })).status, 400);
+      assert.equal((await phone(`/api/device/requests/${reviewed.body.request_id}/result`, { status: "completed", result_ref: "file:../other" })).status, 400);
+      assert.equal((await phone(`/api/device/requests/${reviewed.body.request_id}/result`, { status: "completed", result_ref: "record:12" })).status, 400);
+    });
+    await t.test("a boundary request carries validated values for the phone owner to approve", async () => {
+      assert.equal((await request("/api/requests", token, { device_id: "phone-01", action: "request_geofence" })).status, 400);
+      assert.equal((await request("/api/requests", token, { device_id: "phone-01", action: "request_geofence",
+        args: { name: "Home", latitude: 91, longitude: 0, radius_meters: 200 } })).status, 400);
+      assert.equal((await request("/api/requests", token, { device_id: "phone-01", action: "request_geofence",
+        args: { name: "Home", latitude: 0, longitude: 0, radius_meters: 9 } })).status, 400);
+      // Only the boundary tool takes values, so no other action can smuggle parameters to the phone.
+      assert.equal((await request("/api/requests", token, { device_id: "phone-01", action: "request_photo", args: { name: "Home" } })).status, 400);
+      const issued = await request("/api/requests", token, { device_id: "phone-01", action: "request_geofence",
+        args: { name: " Home ", latitude: -33.86, longitude: 151.21, radius_meters: 250, note: "ignored" } });
+      assert.equal(issued.status, 201);
+      assert.match(issued.body.detail, /"Home"/);
+      const expected = { name: "Home", latitude: -33.86, longitude: 151.21, radius_meters: 250 };
+      const queued = (await phone("/api/device/requests")).body.requests
+        .find(row => row.request_id === issued.body.request_id);
+      // The phone gets the values as an object, stripped of anything the server did not validate.
+      assert.deepEqual(queued.args, expected);
+      const stored = (await request("/api/requests?device_id=phone-01", token)).body.requests
+        .find(row => row.request_id === issued.body.request_id);
+      assert.deepEqual(JSON.parse(stored.args), expected);
+      assert.equal((await phone(`/api/device/requests/${issued.body.request_id}/result`, { status: "declined", detail: "Declined on the phone" })).status, 200);
+    });
+    await t.test("a rules request only narrows what the phone may do", async () => {
+      // Nothing, a name this phone does not know, a cadence out of range and a list that is not a
+      // list are all refused before the phone ever sees them.
+      const refused = [{}, null, { tools_allowed: ["photo", "shell"] }, { tools_allowed: "photo" },
+        { health_interval_minutes: 0 }, { health_interval_minutes: 1441 }, { health_interval_minutes: 2.5 }];
+      for (const args of refused) {
+        assert.equal((await request("/api/requests", token, { device_id: "phone-01", action: "request_settings", args })).status, 400);
+      }
+      assert.equal((await request("/api/requests", token, { device_id: "phone-01", action: "request_settings" })).status, 400);
+      const issued = await request("/api/requests", token, { device_id: "phone-01", action: "request_settings",
+        args: { health_interval_minutes: 2, tools_allowed: ["audio", "photo", "photo"], note: "ignored" } });
+      assert.equal(issued.status, 201);
+      assert.match(issued.body.detail, /health samples every 2 min/);
+      assert.match(issued.body.detail, /may run audio, photo/);
+      const queued = (await phone("/api/device/requests")).body.requests
+        .find(row => row.request_id === issued.body.request_id);
+      // The phone receives exactly the validated rules: a duplicate name is folded away, an
+      // unrecognised key never travels, and the list is what the phone must obey.
+      assert.deepEqual(queued.args, { health_interval_minutes: 2, tools_allowed: ["audio", "photo"] });
+      assert.equal((await phone(`/api/device/requests/${issued.body.request_id}/result`,
+        { status: "completed", detail: "Rules applied on the phone: health samples every 2 min" })).status, 200);
+      // Turning everything off is a valid rule, and so is touching only the cadence.
+      const none = await request("/api/requests", token, { device_id: "phone-01", action: "request_settings", args: { tools_allowed: [] } });
+      assert.equal(none.status, 201);
+      assert.match(none.body.detail, /no dashboard tool runs/);
+      const slow = await request("/api/requests", token, { device_id: "phone-01", action: "request_settings", args: { health_interval_minutes: 60 } });
+      assert.equal(slow.status, 201);
+      assert.doesNotMatch(slow.body.detail, /may run/);
+      for (const id of [none.body.request_id, slow.body.request_id]) {
+        assert.equal((await phone(`/api/device/requests/${id}/result`, { status: "completed", detail: "Rules applied on the phone" })).status, 200);
+      }
+      assert.equal((await phone("/api/device/requests")).body.requests.length, 0);
+    });
+    await t.test("history exports as CSV or JSON without leaking file bytes or hashes", async () => {
+      assert.equal((await fetch(url + "/api/export/events")).status, 401);
+      assert.equal((await fetch(url + "/api/export/events", { headers: { Authorization: `Bearer ${enrollment.device_token}` } })).status, 401);
+      assert.equal((await fetch(url + "/api/export/nope", { headers: { Authorization: `Bearer ${token}` } })).status, 400);
+      assert.equal((await fetch(url + "/api/export/events?device_id=%2F..", { headers: { Authorization: `Bearer ${token}` } })).status, 400);
+      const csv = await fetch(url + "/api/export/events?device_id=phone-01", { headers: { Authorization: `Bearer ${token}` } });
+      assert.equal(csv.status, 200);
+      assert.match(csv.headers.get("content-type"), /text\/csv/);
+      assert.match(csv.headers.get("content-disposition"), /attachment; filename="system-health-events-phone-01-/);
+      const text = await csv.text();
+      assert.ok(text.startsWith('"event_id","device_id","event_type","payload_type","payload","created_at"'));
+      assert.ok(text.includes("system_health"));
+      // A stored name that starts like a spreadsheet formula is escaped when it lands in a cell.
+      const probe = await phone("/api/device/files", { file_id: crypto.randomUUID(), name: "=1+1.txt",
+        mime: "text/plain", kind: "document", data: Buffer.from("secret bytes").toString("base64") });
+      assert.equal(probe.status, 201);
+      const filesCsv = await (await fetch(url + "/api/export/files?format=csv", { headers: { Authorization: `Bearer ${token}` } })).text();
+      assert.ok(filesCsv.includes('"\'=1+1.txt"'), filesCsv);
+      assert.ok(!filesCsv.includes("secret bytes"));
+      const devices = await (await fetch(url + "/api/export/devices?format=json", { headers: { Authorization: `Bearer ${token}` } })).json();
+      assert.equal(devices.kind, "devices");
+      assert.ok(devices.rows.some(row => row.device_id === "phone-01"));
+      assert.ok(!Object.keys(devices.rows[0]).includes("token_hash"));
+      const requests = await (await fetch(url + "/api/export/requests?format=json", { headers: { Authorization: `Bearer ${token}` } })).json();
+      assert.ok(requests.rows.some(row => row.action === "request_geofence"));
+      assert.equal((await fetch(url + "/api/files/" + probe.body.file_id, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } })).status, 200);
+    });
     await t.test("rotating a token destroys the credential held on the phone", async () => {
       const created = (await request("/api/devices", token, { device_id: "phone-rotate", name: "Rotation phone" })).body;
       const upload = secret => request("/api/device/events", secret,
@@ -283,6 +416,19 @@ test("enrollment, authenticated telemetry, live dashboard, and persistence", { t
       const afterRotation = (await request("/api/devices", token)).body.devices.find(row => row.device_id === "phone-rotate");
       assert.equal(afterRotation.enabled, false);
       assert.equal((await request("/api/enrollment/status", second.body.device_token, undefined, { "X-Device-Id": "phone-rotate" })).body.state, "disabled");
+    });
+    await t.test("a phone is renamed without touching its credential or consent", async () => {
+      assert.equal((await request("/api/devices/phone-rotate/name", "", { name: "Stealer" })).status, 401);
+      const renamed = await request("/api/devices/phone-rotate/name", token, { name: "  Kitchen tablet  " });
+      assert.equal(renamed.status, 200);
+      assert.equal(renamed.body.name, "Kitchen tablet");
+      const row = (await request("/api/devices", token)).body.devices.find(device => device.device_id === "phone-rotate");
+      assert.equal(row.name, "Kitchen tablet");
+      assert.equal(row.enabled, false);
+      assert.equal((await request("/api/devices/phone-rotate/name", token, { name: "   " })).status, 400);
+      assert.equal((await request("/api/devices/phone-rotate/name", token, { name: "x".repeat(201) })).status, 400);
+      assert.equal((await request("/api/devices/phone-rotate/name", token, {})).status, 400);
+      assert.equal((await request("/api/devices/phone-missing/name", token, { name: "Ghost" })).status, 404);
     });
     await t.test("disabling a phone stops uploads and requests until it is re-enabled", async () => {
       const created = (await request("/api/devices", token, { device_id: "phone-switch", name: "Switch phone" })).body;
@@ -465,6 +611,35 @@ test("enrollment, authenticated telemetry, live dashboard, and persistence", { t
       assert.equal((await request("/api/enrollment/register", "", fresh)).status, 503);
       assert.equal((await request("/api/enrollment/status", joinedToken, undefined, { "X-Device-Id": joinedId })).body.state, "approved");
       assert.equal((await request("/api/device/events", joinedToken, { event_id: crypto.randomUUID(), payload: { type: "system_health" } }, { "X-Device-Id": joinedId })).status, 200);
+    });
+    await stop();
+    env.APP_RELEASE_VERSION = "0.6.0";
+    env.APP_RELEASE_URL = "https://example.invalid/system-health-0.6.0.apk";
+    await start();
+    await t.test("the server advertises which APK release phones should be on", async () => {
+      const health = (await request("/health")).body;
+      assert.equal(health.latest_app_version, "0.6.0");
+      assert.equal(health.latest_app_url, "https://example.invalid/system-health-0.6.0.apk");
+      // A phone reports its own version as app_version, so the advertised release must not reuse it.
+      assert.equal(health.app_version, undefined);
+    });
+    await t.test("revoking dashboard sessions ends the sign-in everywhere and survives a restart", async () => {
+      assert.equal((await request("/api/devices", token)).status, 200);
+      const live = await connect({ role: "dashboard", token });
+      const closed = new Promise(resolve => live.once("disconnect", resolve));
+      assert.equal((await request("/api/sessions/revoke", token, {})).status, 200);
+      await closed;
+      assert.equal((await request("/api/devices", token)).status, 401);
+      assert.equal((await request("/api/enrollments", token)).status, 401);
+      // Phones keep their own credentials, so device ingest is unaffected by a dashboard sign-out.
+      assert.equal((await request("/api/device/events", joinedToken, { event_id: crypto.randomUUID(), payload: { type: "system_health" } }, { "X-Device-Id": joinedId })).status, 200);
+      const revived = (await request("/api/login", "", { username: "test-admin", password })).body.token;
+      assert.equal((await request("/api/devices", revived)).status, 200);
+      await stop();
+      await start();
+      assert.equal((await request("/api/devices", token)).status, 401);
+      assert.equal((await request("/api/devices", revived)).status, 200);
+      token = revived;
     });
   } finally { await stop(); rmSync(folder, { recursive: true, force: true }); }
 });

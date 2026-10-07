@@ -1,23 +1,30 @@
-# Connected feature status — 0.3.1
+# Connected feature status — 0.5.0
 
 | Feature | Active path | Device condition |
 | --- | --- | --- |
-| Automatic enrollment | Fixed public URL + bundled invitation → generated per-installation credentials → automatic activation → encrypted saved enrollment | Deploy matching backend, open app and allow notifications; no typed URL/ID/token or dashboard approval |
-| System health | CoreService → persistent SyncManager queue → authenticated server → health cards | Enroll and start monitoring |
+| Automatic enrollment | Fixed public URL + bundled invitation → generated per-installation credentials → automatic activation → encrypted saved enrollment | Deploy matching backend, open app and allow notifications; no typed URL/ID/token or dashboard approval. Configuring the phone for a new server clears the rules that server sent |
+| System health | CoreService sampling loop → file outbox (`QueuePolicy`) → authenticated HTTP → health cards | Enroll and start monitoring. Cadence is 5 minutes unless a dashboard rule sets another value |
+| Dashboard rules | `POST /api/requests` `request_settings` → server-side whitelist → phone stores the rules → `device_status` echoes them back → Phone rules panel | Rules only narrow behaviour: sample cadence and which remote tools may run. They cannot grant an Android permission, turn monitoring on, or move capture to a background-started service, and `request_settings`/`request_status` can never be switched off |
+| Scheduled reports | Tools-screen opt-in → existing monitoring poll loop → same outbox → dashboard | Runs only while monitoring is on and stops with it. Only report-only tools (status, nearby scan) can repeat; camera, microphone and screenshot stay one-off |
 | Screen text/fields | Automatic/all-app or selected-app approval → one accessibility reader → queue → readable dashboard panel | No typed IDs; grant access and approve scope; target app must expose text; passwords redacted |
 | Notifications | NotificationReader → approved automatic/selected scope → queue → readable text panel | Grant notification access; Android may redact contents |
 | Service management | Lifecycle status callbacks, Start/Stop, JobIntentService reader reconciliation | Reconnect enabled readers; system owns accessibility binding |
-| Camera | Visible phone action → CameraController → saved file queue → dashboard Files | Camera permission and visible activity |
-| Audio | Start/Stop → AudioRecorder → finalized AAC/M4A chunks → queue → playback/download | Microphone permission; ends when activity pauses |
+| Camera | Dashboard request → headless `HeadlessCapture` on the camera subtype `CoreService` declared → saved file queue → dashboard Files; manual button stays on the tools screen | Camera permission and monitoring started from the app, because Android accepts that subtype only at a visible start; Android's own camera indicator stays on and cannot be suppressed |
+| Audio | Dashboard request → headless `HeadlessCapture` on the microphone subtype, 15 seconds → finalized AAC/M4A chunks → queue → playback/download; manual Start/Stop stays on the tools screen | Microphone permission and monitoring started from the app; a manual recording ends when the tools screen pauses; Android's microphone indicator stays on |
 | Screenshot | Android consent → one-shot projection foreground service → JPEG queue → Files | Per-session Android permission; secure windows remain protected |
 | Location | Application-initialized TrackingSink → location FGS → authenticated queued reports → map | Precise location/GPS and explicit start; Stop monitoring ends sharing |
-| Geofences | Add/remove/list/restore controls → original geofence APIs → sink → boundary history | Fine/background location; explicit location sharing |
-| Environment scan | Visible scan control → EnvironmentScanner → report queue → Nearby scans | Location, Wi-Fi, Bluetooth enabled; required runtime permissions |
-| Audit | Original redacted own-app audit → local review → export or explicit file share | Own private app data; no other-app sandbox bypass |
-| Settings backup | Original backup utility + app selection/geofences → export/share/restore controls | Credentials and active consent excluded; boundaries restored with separate approval |
-| Files | Android file/folder picker → local vault/export/delete → authenticated cloud upload/download/delete | Only selected accessible documents; storage quotas visible |
-| Dashboard controls | Authenticated request queue → phone review → action result → output panels | Phone monitoring on; no automatic covert captures |
-| Logs | Received event history with type/search filtering | Last 100 events; latest location also loaded independently |
+| Geofences | Add/remove/list controls, plus a dashboard boundary request the owner approves on the phone → original geofence APIs → sink → boundary history | Fine/background location ("Allow all the time"); explicit location sharing for crossings |
+| Environment scan | One engine, `HeadlessScan`, used by both the tools screen and the background request loop → report queue → Nearby scans | Location, Wi-Fi, Bluetooth enabled; required runtime permissions; a throttled radio is reported in "notes" instead of discarding the other |
+| Exports | Dashboard Export panel → authenticated `/api/export/:kind` as CSV or JSON, newest 1000 rows | Dashboard sign-in; captured file bytes and enrollment secrets are never exported |
+| Files | Android folder picker → local vault/export/delete → authenticated cloud upload/download/delete | Only selected accessible documents; storage quotas visible |
+| Dashboard controls | Authenticated request queue → delivery states (`pending → delivered → running → completed/reviewed/declined/failed/expired`) → output panels | Phone monitoring on. Silent tools answer from the background loop; photo and microphone are captured headless inside the service Android already started; a screenshot still needs the app visible so Android can ask there. No covert capture |
+| Update awareness | `/health` `latest_app_version` / `latest_app_url` → connection probe → home-screen notice | Only ever reports a strictly newer dotted version than this build; a `-dev` build is not told a same-number release is an upgrade |
+| Session revocation | `POST /api/sessions/revoke` → stored "valid from" watermark → live dashboard sockets dropped | Dashboard sign-in. Ends every dashboard login now and survives a restart; device credentials are separate |
+| Logs | Two views: the selected-phone Logs tab (most recent 100 received events, type filter and text search over those rows) and the Activity log section (server-paged history across phones). Request state changes are shown in the Requests ledger | Dashboard sign-in; the server keeps events only for `RETENTION_DAYS`, so older rows disappear rather than hanging around forever |
 | Alternative source | Original archives, variants and prototype components retained | Active app uses the integrated protocol above |
 
-All source files compile. Android controls are connected to the retained utilities. Software build/integration checks passed; physical sensor, OEM power/reboot and accessibility behavior require phone tests. A compiled APK does not guarantee that another app exposes every field or message.
+All source files compile. Android controls are connected to the retained utilities. Software build/integration checks passed; physical sensor, OEM power/reboot, accessibility and scheduled-report behavior require phone tests. A compiled APK does not guarantee that another app exposes every field or message.
+
+Every remote tool row above is also subject to the dashboard rule set: a tool the owner switched off on the dashboard is answered `declined` on the phone with the rule named, so the ledger never shows a delivered request that quietly did nothing. Rules never add a permission or start monitoring.
+
+Three tools were removed on 2026-10-07 at the owner's request, and nothing in this build can request them: the local security audit, the single-document file picker ("Choose a file", which needed Android's picker on the phone itself), and the settings backup/export/restore pair with its "Restore backed-up geofences" step. The server refuses those actions, the rules list no longer names them, and the dashboard has no panel for them. Files already uploaded by an older build stay downloadable in the Files panel until the retention window passes; a `reviewed` ledger entry now only comes from an older phone build.

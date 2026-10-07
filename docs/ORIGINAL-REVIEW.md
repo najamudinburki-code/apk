@@ -1,4 +1,6 @@
-Historical snapshot: Historical review of the original upload. Current instructions are in START-HERE.md and docs/CONNECTOR-REVIEW.md.
+Historical snapshot: Historical review of the original upload. Current instructions are in
+START-HERE.md, docs/FEATURE-STATUS.md and ../DEV-HANDOFF.md; docs/REVIEW.md and
+docs/CONNECTOR-REVIEW.md are themselves historical records now.
 
 # Source bundle review
 

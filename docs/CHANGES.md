@@ -91,3 +91,82 @@ VersionCode 6, versionName 0.3.2. All 23 previous active Kotlin files and their 
 - Added a local dashboard entry point that overrides other endpoint configuration only in this dev process. Production build/start commands and server API implementation are unchanged.
 - Added Windows/shell setup, start and USB forwarding launchers, LOCAL-DEVELOPMENT.md, PROJECT.md, and a GitHub Actions test-APK build workflow.
 - Existing delivered APK/installation site and Render/Neon account configuration were not changed. Native Kotlin updates use Apply Changes or Run; one-second native updates are not promised.
+
+
+## 0.5.0 — one transport, honest delivery, dashboard control
+
+VersionCode 8, versionName 0.5.0. `android/version.properties` is now the only place the app version is written.
+
+**One upload path.** The socket stack (`SyncManager.kt`, `NetworkMonitor.kt`) is gone: every report, capture and request answer now travels over the same authenticated HTTP device routes the health data already used, from a file outbox under the app's own storage. `QueuePolicy` holds the decisions that used to be scattered through the queue — 200 pending entries, 20 per send, 40 attempts, and only `system_health`/`device_status` may be shed when the queue is full. The loop sends every 10 seconds, every 5 seconds while a backlog exists, and backs off to at most 5 minutes when the server keeps refusing. A socket is now only ever used by the dashboard.
+
+**Delivery the ledger can prove.** A request moves `pending → delivered → running → completed / reviewed / declined / failed / expired`, and a completed result records which event or file proves it (`result_ref`). The phone reports what it actually did: a capture that failed says so instead of reporting success, and nothing is marked delivered before the server accepted it.
+
+**Capture without a window, and the tools that still need one.** `request_photo` and `request_audio` run headless on the camera/microphone subtype that `CoreService` already declared, so a dashboard request no longer drags the tools screen to the front. Android's own camera and microphone indicators still appear and cannot be suppressed. Screenshot, file picking, geofence approval and location start remain visible, consented actions. `HeadlessScan` is the single scan engine for both the screen and the background loop, and `EnvironmentScanner.kt` is deleted. `DeviceCommandRouter` classifies each action so the routing is unit-testable.
+
+**Dashboard.** A delivery ledger with a fix-it list, device rename/disable/revoke with token rotation, server-paged Activity log, CSV/JSON exports of the newest 1000 rows with a spreadsheet-formula guard, a boundary request the owner approves on the phone, a Phone rules tab, and "Sign out everywhere" that ends live dashboard sessions immediately through a stored watermark rather than waiting for tokens to expire.
+
+**Phone rules (`request_settings`).** The dashboard can only narrow a phone: health sample cadence (1–1440 minutes) and which remote tools may run, validated by a server-side whitelist and again on the phone. Rules never grant an Android permission, never enable monitoring, and the rules and status channels cannot be switched off, so a narrowed phone can always be widened again. The phone stores the rules, declines a rule-blocked request with the rule named, and echoes the live rule set in `device_status`; re-enrolling to a different server clears them.
+
+**Scheduled reports.** The owner can opt a report-only tool (status, scan, audit, backup) into repeating every 15/30/60/240 minutes. It runs inside the existing monitoring loop rather than WorkManager — no new dependency, no new permission, and it stops the moment monitoring stops. Camera, microphone, screenshot and file tools cannot be scheduled.
+
+**Update awareness.** `/health` can advertise `latest_app_version` and `latest_app_url`; a phone only mentions an update when the number is strictly higher than its own build, so a `-dev` install is never told a same-number release is newer.
+
+**Build and checks.** Release signing reads `keystore.properties` (ignored) instead of embedding a key, R8 keeps its map at the default `build/outputs/mapping/release/mapping.txt`, low-memory Gradle settings are documented, cleartext stays limited to the local `dev` variant, and CI runs the Android build/tests/lint plus backend integration tests and the dashboard build.
+
+**What is not claimed.** Backend integration tests, Android unit tests, the `dev`/`debug`/`release` assemblies and the dashboard build pass in this environment, and the rules flow was exercised against a throwaway local backend and database. This is not a signed production release, and the hosted release-signed APK with Render has never been run on a phone.
+
+### Camon 20 session, 7 October 2026 — three repairs found on hardware
+
+A physical TECNO Camon 20 (Android 14) ran the `dev` build against the local development backend; the
+measured results and the remaining gaps are in `docs/VALIDATION.md`. Three defects came out of it:
+
+- **A successful capture left the phone permanently busy.** `HeadlessCapture` cleared its in-flight
+  request only on the failure paths, so the first headless photo completed and every camera and
+  microphone request after it answered "Phone is already finishing another capture." until monitoring
+  stopped. The queue now releases the slot once the file is handed over, the same way the failure path
+  always has.
+- **A second capture arriving during the first was refused instead of waiting.** The lens and microphone
+  genuinely serve one request at a time, but answering the extra ones with a failure threw away work the
+  owner had asked for. The poll loop now dispatches at most one capture per pass and leaves the rest in
+  the server's queue, where they run on a later poll or expire after ten minutes. Three photos sent
+  inside 1.4 seconds now all arrive, about six seconds apart.
+- **Monitoring could report a start that never happened.** `CoreService` correctly refuses to run while
+  the app's notifications are switched off — it must keep a visible activity notice — but the home
+  screen still toasted "Starting monitoring. Check the ongoing notification.", leaving dashboard
+  requests stuck at `delivered` with no explanation anywhere. The start action now checks the switch
+  first, says what is missing and opens that settings screen.
+
+Two setup papercuts the same session exposed are fixed too: the development launcher now forwards the
+release-announcement keys it used to drop, and the backend accepts a comma-separated list of exact
+dashboard origins, so a local dashboard opened as `localhost` instead of `127.0.0.1` no longer reports
+"Cannot reach the server".
+
+### Three tools removed, 7 October 2026
+
+The owner asked for the app to stop offering the local security audit, the single-document file picker
+and the settings backup/restore pair: two of them produced reports nobody read, and the file picker only
+ran on the handset, which is the one place they are not when operating from the dashboard. Nothing was
+left half-removed.
+
+- **Android.** `SecurityAuditTool.kt` and `SettingsBackupTool.kt` are deleted, along with the whole
+  `com.example.utility.security` and `com.example.utility.backup` packages. The tools screen loses
+  "Run local security audit", "Create settings backup", "Restore settings backup", "Select a file to
+  share" and "Restore backed-up geofences" — that last one only ever read the list a backup had saved,
+  so it had no other way to be filled. `audit()`, `backup()`, `pickFile()`, `restore()`, `decodeFence()`
+  and `FeatureBridge.share()`/`backupReport()` are gone, and activity-result codes 41 and 42 no longer
+  exist. `DeviceCommandRouter`, `RemotePolicy.tools` and `ReportSchedule.tools` lost the three names, so
+  the report-only tools left to schedule are phone status and a nearby scan.
+- **Backend.** `request_audit`, `request_files` and `request_backup` are no longer accepted actions, the
+  rule whitelist is `audio, geofence, location, photo, screenshot, scan`, and `POST /api/device/files`
+  refuses an `audit` or `backup` kind. The `reviewed` result state stays in the protocol: an older
+  installed build can still report it, and existing ledger rows keep their history.
+- **Upgrading in place.** A phone that had the audit or backup report switched on keeps that choice in
+  its own preferences, so `ReportSchedule.enabled` now ignores a stored name this build does not have
+  instead of falling through and uploading a status report under the old label. Turning any schedule off
+  and on again clears the stale entry.
+- **Dashboard.** Quick-action buttons, rule checkboxes and the "Audit and backups" tab are removed.
+  Files an older build already uploaded stay listed and downloadable in **Files** until the retention
+  window deletes them.
+- **Still there, deliberately.** "Choose / browse a folder" and "View / export / delete local files",
+  because those serve the folder vault rather than the removed picker. No consent control, activity
+  notice or Stop path changed.

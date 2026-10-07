@@ -1,3 +1,6 @@
+Historical snapshot: record of the compile errors found in the original upload and how they were
+repaired. Current state is described by `docs/FEATURE-STATUS.md` and `../DEV-HANDOFF.md`.
+
 # Screen monitor errors — resolved
 
 The earlier five diagnostics came from three unsupported Android API references. The source was reviewed and repaired after permission to make the project buildable was granted.

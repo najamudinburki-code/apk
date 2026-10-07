@@ -1,7 +1,6 @@
 package com.example.systemhealth
 
 import android.app.Notification
-import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -32,7 +31,7 @@ class ScreenCaptureService : Service() {
     private var saving = false
     private var finished = false
     private val callback = object : MediaProjection.Callback() {
-        override fun onStop() { if (!finished && !saving) end(false, "Screen sharing stopped before capture.") }
+        override fun onStop() { if (!finished && !saving) end("declined", "Screen sharing stopped before capture.") }
         override fun onCapturedContentResize(width: Int, height: Int) {
             // Keep one virtual display per consent grant on Android 14+.
             if (width > 0 && height > 0 && !saving && !finished) resize(width, height)
@@ -40,19 +39,20 @@ class ScreenCaptureService : Service() {
     }
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == "stop") { end(false, "Screenshot cancelled on phone."); return START_NOT_STICKY }
+        if (intent?.action == "stop") { end("declined", "Screenshot cancelled on phone."); return START_NOT_STICKY }
         if (projection != null || saving) return START_NOT_STICKY
         requestId = intent?.getStringExtra("request_id")
         try {
             check(CoreService.isMonitoringEnabled(this)) { "Start monitoring before screen sharing" }
-            NotificationPresentation.quietChannel(this, "screen_capture", "Approved screenshot", "Visible status during an Android-approved screenshot")
-            val notification = Notification.Builder(this, "screen_capture")
+            NotificationPresentation.applyChannels(this)
+            val notification = Notification.Builder(this, NotificationPresentation.SCREEN_CHANNEL)
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
+                .setContentTitle("Screenshot pending")
+                .setContentText("Android will capture one frame five seconds after you choose what to share.")
                 .setOnlyAlertOnce(true).setOngoing(true)
                 .setVisibility(Notification.VISIBILITY_SECRET).build()
             if (Build.VERSION.SDK_INT >= 29) startForeground(3020, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
             else startForeground(3020, notification)
-            NotificationPresentation.refresh(this)
             @Suppress("DEPRECATION")
             val data = intent?.getParcelableExtra<Intent>("projection_data") ?: error("Android screen-sharing consent missing")
             projection = getSystemService(MediaProjectionManager::class.java).getMediaProjection(intent.getIntExtra("result_code", 0), data)
@@ -64,8 +64,8 @@ class ScreenCaptureService : Service() {
             display = projection?.createVirtualDisplay("Approved screenshot", size.first, size.second, metrics.densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader?.surface, null, handler)
             handler.postDelayed({ capture() }, 5200)
-            handler.postDelayed({ if (!saving && !finished) end(false, "No screen frame received. Try sharing the entire screen.") }, 15000)
-        } catch (e: Exception) { end(false, e.message?.take(120) ?: "Screen capture could not start.") }
+            handler.postDelayed({ if (!saving && !finished) end("failed", "No screen frame received. Try sharing the entire screen.") }, 15000)
+        } catch (e: Exception) { end("failed", e.message?.take(120) ?: "Screen capture could not start.") }
         return START_NOT_STICKY
     }
     private fun dimensions(width: Int, height: Int): Pair<Int, Int> {
@@ -88,7 +88,7 @@ class ScreenCaptureService : Service() {
             display?.resize(size.first, size.second, resources.displayMetrics.densityDpi)
             display?.surface = reader?.surface
             previous?.close()
-        } catch (_: Exception) { end(false, "Screen resize failed. Try again.") }
+        } catch (_: Exception) { end("failed", "Screen resize failed. Try again.") }
     }
     private fun capture() {
         if (saving || finished || SystemClock.elapsedRealtime() < captureAt) return
@@ -110,16 +110,21 @@ class ScreenCaptureService : Service() {
                         output
                     } finally { image.close() }
                 }
-                withContext(Dispatchers.IO) {
-                    try { FeatureBridge.queueFile(this@ScreenCaptureService, file, file.name, "image/jpeg", "screenshot") }
-                    finally { file.delete() }
+                val queued = withContext(Dispatchers.IO) {
+                    try {
+                        FeatureBridge.queueFile(this@ScreenCaptureService, file, file.name, "image/jpeg", "screenshot",
+                            requestId, "Screenshot uploaded to the dashboard Files.")
+                        true
+                    } finally { file.delete() }
                 }
-                end(true, "Screenshot saved to phone upload queue. Confirm delivery in dashboard Files.")
+                // The dashboard answer comes from FeatureBridge once the upload is confirmed, so the
+                // capture only reports that the file is on its way.
+                if (queued) end("running", "Screenshot captured and queued for upload.")
             } catch (e: CancellationException) { image.close(); throw e }
-            catch (_: Exception) { end(false, "Screenshot could not be saved or queued.") }
+            catch (_: Exception) { end("failed", "Screenshot could not be saved or queued.") }
         }
     }
-    private fun end(ok: Boolean, detail: String) {
+    private fun end(state: String, detail: String) {
         if (finished) return
         finished = true
         handler.removeCallbacksAndMessages(null)
@@ -127,16 +132,12 @@ class ScreenCaptureService : Service() {
         reader?.close(); reader = null
         projection?.unregisterCallback(callback); projection?.stop(); projection = null
         val id = requestId; requestId = null
-        if (id != null) CoroutineScope(Dispatchers.IO).launch {
-            runCatching { FeatureBridge.finishRequest(applicationContext, id, if (ok) "completed" else "failed", detail) }
-        }
-        getSharedPreferences("feature_options", 0).edit().putString("screenshot_status", detail).apply()
+        if (id != null) CoroutineScope(Dispatchers.IO).launch { FeatureBridge.finishRequest(applicationContext, id, state, detail) }
         stopForeground(STOP_FOREGROUND_REMOVE)
-        NotificationPresentation.refresh(this)
         stopSelf()
     }
     override fun onDestroy() {
-        if (!finished) end(false, "Screenshot service stopped.")
+        if (!finished) end("failed", "Screenshot service stopped.")
         scope.cancel()
         super.onDestroy()
     }

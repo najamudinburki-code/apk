@@ -77,6 +77,9 @@ internal object SyncSettingsStore {
             .putString("ciphertext", Base64.encodeToString(ciphertext, Base64.NO_WRAP))
             .commit()
         if (!saved) throw IOException("Enrollment settings could not be saved")
+        // Rules were sent by whichever server was configured here before, so a new enrollment
+        // starts from this phone's own choices instead of an inherited restriction.
+        RemotePolicy.clear(context)
     }
 
     @Synchronized

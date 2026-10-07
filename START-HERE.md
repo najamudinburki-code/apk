@@ -1,4 +1,4 @@
-# Install the System Health app (0.4.0)
+# Install the System Health app (0.5.0)
 
 You have a compiled, signed **test APK**. You can install it directly; Android Studio is optional.
 
@@ -8,29 +8,43 @@ You have a compiled, signed **test APK**. You can install it directly; Android S
 
 Open [Install System Health](https://system-health-install.jkrick33.chatgpt.site) on your Android phone, or scan the QR shown there. This installation page is private to your ChatGPT account; sign in with that account if prompted.
 
-1. Tap **Download latest APK**, then open the downloaded file and tap **Install** or **Update**. Android may ask you to allow installation from that browser/file manager. Version 0.4.0 uses the same signing certificate as the previous delivered test APK and keeps your existing enrollment and settings.
+1. Tap **Download latest APK**, then open the downloaded file and tap **Install** or **Update**. Android may ask you to allow installation from that browser/file manager. This 0.5.0 test APK is the debug build, so on the computer that built it it keeps the same signing certificate as the previous delivered test APK and your existing enrollment and settings survive. A release build is unsigned until you give it your own key (see `docs/ANDROID-BUILD.md`); never reuse the debug key for a published app.
 2. Open System Health and follow **Connect → Permissions → Check**. Connection is automatic. Select the tools to prepare, allow the missing permissions, then review the connection check. Granted permissions are skipped, and missing permissions can be enabled later. The saved wizard stage and tool choices are kept when you leave setup.
 3. Tap **Finish — open home**. Check the server result, monitoring state and **Last successful upload**. That timestamp is recorded only after the server acknowledges an upload. New installations start health monitoring after permitted automatic enrollment and status-notification permission. Existing stopped monitoring remains stopped; tap Start when ready.
 
-If your backend health check already shows `api_version: 4` and `automatic_enrollment: true`, **no Render backend/dashboard redeployment is needed** for this Android update. The installation page is hosted separately from your existing dashboard; your data still goes to the configured Render backend.
+If your backend health check already shows `api_version: 4` and `automatic_enrollment: true`, **no Render backend/dashboard redeployment is needed** for this Android update; the phone talks to the same routes it did in 0.4.0. Redeploy the bundled backend and dashboard when you want the new dashboard tabs (Phone rules, the Requests ledger, Activity log, Export) or the optional `APP_RELEASE_VERSION` update notice. The installation page is hosted separately from your existing dashboard; your data still goes to the configured Render backend.
 
 ## Front camera and retained tools
 
 Open **Device tools, location and shared files**. The photo tool now defaults to **Front camera**. **Rear camera** remains available in the camera selector; your selection is remembered. A missing chosen lens produces an error and does not silently substitute the other camera. Both local photo consent and reviewed dashboard photo requests show which lens is used.
 
-All prior tools and function names remain. The home screen groups configuration and reader diagnostics under **Advanced settings**. Start, Stop, app-text sharing, guided setup and Device tools stay easy to reach. Sensitive requests still need phone review, and camera/microphone/screenshot controls remain visible.
+The home screen groups configuration and reader diagnostics under **Advanced settings**. Start, Stop, app-text sharing, guided setup and Device tools stay easy to reach. The local security audit, the settings backup/export/restore pair and the single-document file picker were removed on 2026-10-07, so their buttons, dashboard panel and server actions are gone; everything else keeps its name and entry point. Screenshot, location start and geofence approval still need the visible tools screen, because that is where Android asks for consent; camera and microphone answers to dashboard requests are captured headless inside monitoring that you started, with Android's own indicator showing. Nothing in this app captures without one of those consented paths.
+
+## New in this version on the phone
+
+- **Dashboard rules.** The dashboard can only make this phone do *less*: a different health sample cadence, or switching remote tools off. It can never grant an Android permission, turn monitoring on, or hide a capture. The rules are shown on the phone's home status and tools screen, and the phone reports back the rule set it is actually obeying. Point the phone at a different server and the old rules are cleared.
+- **Scheduled reports.** On the tools screen you can have phone status or a nearby scan repeat every 15, 30, 60 or 240 minutes. They run inside normal monitoring, so they stop the moment you tap Stop, and no camera, microphone or screenshot tool can be scheduled.
+- **Update notice.** When the backend advertises a newer APK, the home screen says which version and where to get it. It only ever mentions a strictly newer version than the one installed.
 
 ## Test this upgrade on your phone
 
-- Install as an update and confirm your existing phone appears under its original identity.
-- Complete the wizard, deny one optional permission, and confirm the remaining setup works. Reopen **Guided setup / permissions** and confirm allowed permissions are skipped.
-- Run **Check connection** and confirm both a reachable server and accepted phone credentials. Disable internet briefly, retry, and confirm the app reports a connection problem instead of claiming it is connected.
-- Start monitoring and confirm the successful-upload timestamp changes after the first sample. Compare the dashboard sample time.
-- Take an approved front-camera test photo. Confirm it is from the front lens in dashboard Files. Switch to Rear and repeat to check the retained option.
-- Expand **Advanced settings** and confirm manual connection settings, accessibility settings, notification access, reader reconnect and detailed status are still present.
-- Confirm Stop ends sharing and the active notices clear. Quiet, grouped notifications remain visible; phone/OEM presentation can vary.
+- Install as an update and confirm your existing phone appears under its original identity. ✅ 2026-10-07
+- Complete the wizard, deny one optional permission, and confirm the remaining setup works. Reopen **Guided setup / permissions** and confirm allowed permissions are skipped. ✅ 2026-10-07
+- Run **Check connection** and confirm both a reachable server and accepted phone credentials. Disable internet briefly, retry, and confirm the app reports a connection problem instead of claiming it is connected. Partial — the reachable-server half is checked; the airplane-mode half is not.
+- Start monitoring and confirm the successful-upload timestamp changes after the first sample. Compare the dashboard sample time. ✅ 2026-10-07
+- Take an approved front-camera test photo. Confirm it is from the front lens in dashboard Files. Switch to Rear and repeat to check the retained option. Partial — photos arrive from the front lens selection; nobody has opened one to confirm the framing, and Rear has not been tried.
+- Expand **Advanced settings** and confirm manual connection settings, accessibility settings, notification access, reader reconnect and detailed status are still present. ✅ 2026-10-07
+- Send a **Phone rules** change from the dashboard (for example switch Photo off) and confirm it appears in the home-screen rule summary, that a later photo request comes back **declined** naming the rule, and that the dashboard shows the rule set the phone reported. Send the rules back on and confirm the photo works again without touching Android permissions. ✅ 2026-10-07, both directions
+- Switch on one **Scheduled report** at the shortest cadence, keep monitoring on, and confirm it arrives again without you tapping anything — then tap Stop and confirm it stops with monitoring. ✅ 2026-10-07 (status and scan both fired on their own; the audit and backup reports were taken out of the app afterwards)
+- If your backend sets `APP_RELEASE_VERSION`, confirm the home screen mentions only a version newer than the installed one, and shows nothing when the advertised version is the same or lower. ✅ 2026-10-07, against a deliberately advertised version
+- Confirm Stop ends sharing and the active notices clear. Quiet, grouped notifications remain visible; phone/OEM presentation can vary. Partial — reported working on the Camon 20, but the server recorded no answer behind it, so the notice-clearing half is unconfirmed by measurement.
 
-This is a signed test APK. Build, lint and unit checks pass, but no physical phone is connected here. Actual sensor, permission, notification and installation behavior still needs the phone checks above.
+This is a signed test APK. Build, lint and unit checks pass. Several of the checks above were re-run on a
+physical TECNO Camon 20 (Android 14) on 2026-10-07 against a **local development backend**, and the results
+are recorded in `docs/VALIDATION.md`; the ticks mark those. That session found and fixed two real capture
+bugs, so it does not clear the release build: the hosted, release-signed APK with Render has still never
+been run on a phone, and reboot/auto-start, long Doze idle, screen capture on this OEM and geofence entry
+remain untested.
 
 The sections below describe first-time deployment. Skip them if your current version-4 backend/dashboard already work.
 
@@ -40,7 +54,7 @@ Extract **Render-deployment.zip**. Open the inner folder that contains `backend`
 
 Open your existing GitHub repository `najamudinburki-code/apk`. Choose **Add file → Upload files**. Drag the extracted folders and root files into the browser upload area. Commit the update. Replace the files at the same paths; keep `backend` and `dashboard` directly at the repository root.
 
-The new server needs `backend/installation.cjs`, `backend/enrollment.cjs`, `backend/features.cjs`, `backend/feature-store.cjs` and the updated server files. The dashboard needs `components/EnrollmentPanel.jsx`, `components/FeaturePanels.jsx` and updated `App.jsx`. Uploading the complete extracted contents is easier than picking individual files.
+The new server needs `backend/installation.cjs`, `backend/enrollment.cjs`, `backend/features.cjs`, `backend/feature-store.cjs` and the updated server files. The dashboard needs `components/EnrollmentPanel.jsx`, `components/FeaturePanels.jsx`, the new `components/ActivityLog.jsx` and updated `App.jsx`. Uploading the complete extracted contents is easier than picking individual files, and `docs/FINAL-FILE-MAP.json` lists every file that should exist afterwards.
 
 ## 2. Deploy both existing Render services
 
@@ -126,16 +140,14 @@ Open **Device tools, location and shared files** in the phone app.
 | Screenshot | Approve Android's screen-sharing dialog; open the selected screen during the 5-second countdown | **Files** |
 | Location | Start sharing location; allow precise location; enable GPS | **Location**, with accuracy and sample time |
 | Geofences | Add a name, coordinates and radius; grant Location **Allow all the time**; start location sharing | **Location → Geofence events** |
-| Nearby scan | Enable Wi-Fi, Bluetooth and Location; run one scan and keep the tools screen open | **Nearby scans** |
-| Security audit | Run local audit; review the redacted report; choose Share report or Export | **Audit and backups**, if shared |
-| Settings backup | Create a backup; choose Export or Share report | **Audit and backups**, if shared |
-| Restore | Select an exported backup; approve text sharing again; use Restore backed-up geofences to register saved boundaries | Restored automatic/selected-app scope and boundaries |
-| File manager | Choose a file or browse an Android-approved folder; confirm which file to upload | **Files** |
-| Remote requests | Send a request in dashboard **Requests**; its status advances pending → delivered → completed as the phone works through it | Request result, then the corresponding output panel |
+| Nearby scan | Enable Wi-Fi, Bluetooth and Location; run one scan on the phone, or send the dashboard request and it runs without opening the screen | **Nearby scans** |
+| Folder browsing | Choose a folder with Android's picker, open it on the phone, then confirm the one file to upload | **Files** |
+| Remote requests | Send a request in dashboard **Requests** or **Phone rules**; the ledger shows pending → delivered → running → completed / reviewed / declined / failed / expired | Request result, then the corresponding output panel |
+| Scheduled reports | On the tools screen pick a cadence and switch on phone status or a nearby scan | Same output panels as the one-off tool, repeated while monitoring runs |
 
-Phone status, security audit and settings backup run silently. Camera, microphone, screenshot, location and file picking need the visible tools screen, so those requests open it on the phone; Android can refuse that launch while the screen is locked, and the request then reports a failure you can re-send. Leaving the tools screen stops microphone recording. Screen capture still uses Android's per-session approval.
+Phone status, nearby scans, photo capture and microphone recording run in the background: a dashboard request for any of them never opens the phone's screen. Android hands out camera and microphone access only when monitoring starts from a visible app, so tap **Start monitoring** in the app after installing or after any boot; a session that Android restarted at boot keeps reporting and screen reading but answers a photo or microphone request with a failure you can re-send after starting monitoring yourself. Android still shows its own camera and microphone indicator while they run, and that indicator cannot be turned off by the app. Screenshot, location and geofence approval still need the visible tools screen because Android asks for consent there, so those requests open it; Android can refuse that launch while the screen is locked, and the request then reports a failure you can re-send. A recording or photo started on the tools screen stops when you leave it. A dashboard microphone request records for 15 seconds.
 
-“Completed” on a request means its phone action finished or its output was queued; read the result detail and check the output panel to confirm delivery. Reports can be reviewed/exported locally without sharing them.
+A request that a dashboard rule keeps switched off is answered **declined** with the rule named, so the ledger never shows something as delivered that quietly did nothing. "Completed" means the phone finished the action, and the ledger links the event or file that proves it; read the result detail and check the output panel to confirm delivery. Reports can be reviewed/exported locally without sharing them.
 
 Uploads and request checks run about every 10 seconds while monitoring is on — every 5 seconds when items are already waiting, and longer only after a connection failure. The phone retains pending uploads across app restarts, tied to their original server/device configuration. Free hosting can take time to wake; leave monitoring on and refresh the dashboard.
 
@@ -143,9 +155,10 @@ Limits are displayed in the app: 4 MiB per file, 50 MiB of local saved tool file
 
 ## What was checked
 
-- Backend: `npm test` → 31 passing checks against SQLite. They cover invitation-based joining and concurrent join retries, upgrade of pending phones, disabling future joins without disconnecting existing phones, legacy registration and approval/decline, token isolation, duplicate approval, expiry renewal, disabled phones, auth, rate limits, persisted telemetry, duplicate retries, 4 MiB files, downloads, the pending → delivered → completed request flow, token rotation that revokes the old credential, the retention sweep, and server restarts. The PostgreSQL code path only runs when `TEST_DATABASE_URL` points at a live database, which was not available for this run.
-- Android: 24 unit checks passed (request routing, upload cadence, app-capture scope, camera selection, enrollment identity, permission plan, readiness). `assembleDebug` and `assembleRelease` both build, and Android's blocking lint check (`lintVitalRelease`) passes; the release build now runs R8 with `proguard-rules.pro` and produces `app-release-unsigned.apk`, so it must be signed before use. Package `com.example.systemhealth`, version `0.5.0`, Android 8+.
-- Dashboard: production build passes (`npm run build`).
-- Not checked in this run: anything that needs a physical phone, and browser-level dashboard checks. No device was connected.
+- Backend: `npm test` → **39 passing checks** against SQLite. They cover invitation-based joining and concurrent join retries, upgrade of pending phones, disabling future joins without disconnecting existing phones, legacy registration and approval/decline, token isolation, duplicate approval, expiry renewal, disabled phones, auth, rate limits, persisted telemetry, duplicate retries, 4 MiB files, downloads, the full request lifecycle including `running` and rule-blocked `declined`, the rules payload being rejected when it asks for an unknown tool or an out-of-range cadence, token rotation that revokes the old credential, the retention sweep, dashboard session revocation that survives a restart, the advertised APK release, and server restarts. The PostgreSQL code path only runs when `TEST_DATABASE_URL` points at a live database, which was not available for this run.
+- Android: **49 unit checks passed, zero failures** in both the `dev` and `debug` variants (request routing including the rules channel, upload cadence, outbox shedding and retirement, app-capture scope, camera selection, enrollment identity, permission plan, readiness, dashboard-rule interpretation, report scheduling, and update-version comparison). `:app:assembleDev`, `:app:assembleDebug`, `:app:assembleRelease`, `:app:lintDev` and `:app:lintDebug` all pass; lint reports **0 errors** (100 style/target-SDK warnings remain, none blocking). Package `com.example.systemhealth`, versionCode 8, versionName `0.5.0`, Android 8+. The release build runs R8 and writes `app-release-unsigned.apk`, so it must be signed with your own key before use; its deobfuscation map is at `app/build/outputs/mapping/release/mapping.txt`.
+- Dashboard: production build passes (`npm run build`, 387.58 kB bundle). A built bundle without `VITE_SERVER_URL` falls back to `http://localhost:3000` and cannot reach your hosted backend — set it before deploying.
+- Rules flow in a browser: the Phone rules tab was exercised against a throwaway local backend and temporary SQLite file with self-generated test credentials — sending rules, seeing the phone's reported rule set, and confirming a switched-off tool is declined. No production or dev `.env`, database or deployment was read or changed, and the scratch backend, database and files were removed afterwards.
+- Not checked in this run: anything that needs a physical phone, and no full dashboard browser walkthrough of every tab. No device was connected.
 
 Physical camera, microphone, GPS, Bluetooth, accessibility behavior, OEM battery restrictions and reboot behavior still need testing on your Camon 20. The debug APK installs directly; the unsigned release APK needs signing first.

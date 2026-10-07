@@ -28,7 +28,9 @@ Retain the currently working **DATABASE_URL**, **DASHBOARD_USERNAME**, **DASHBOA
 
 **Retention is optional too.** `RETENTION_DAYS` (integer 1–3650, default 30) bounds how long received events, uploaded files, idempotency receipts, finished tool requests and abandoned enrollment requests stay in Neon. The backend sweeps once at startup and then every six hours. Photos, audio and screenshots therefore disappear on the same schedule as the records that describe them — download anything you want to keep from the dashboard's Files panel first. The per-phone quota (100 MiB / 500 files) still bounds storage between sweeps. Add the variable only when the default does not suit you; the extra receipt-timestamp column this version needs is created on startup without losing existing rows.
 
-**Revoking a phone needs no redeploy.** In the dashboard's Connected phones section use **Disable phone** to stop its uploads and pending work immediately (reversible), or **Rotate token** so the credential stored on that device stops working at once; type the newly shown token into the app's Advanced connection settings.
+**Announcing a newer APK is optional.** `APP_RELEASE_VERSION` (and optionally `APP_RELEASE_URL`) make `/health` answer `latest_app_version` and `latest_app_url`. A phone compares that number with its own build during its connection check and only mentions a strictly newer version, with the download link when you supplied one. Leave both absent and phones never see an update notice; set them to a version you actually host, because the app cannot install it for them.
+
+**Revoking a phone needs no redeploy.** In the dashboard's Connected phones section use **Disable phone** to stop its uploads and pending work immediately (reversible), **Rotate token** so the credential stored on that device stops working at once — type the newly shown token into the app's Advanced connection settings — or rename it for the roster without touching its identity. **Sign out everywhere** is separate: it ends every dashboard login immediately through a stored cut-off time rather than waiting for tokens to expire, and it keeps working after a restart. Phones are unaffected by it.
 
 If auto-deploy did not start, choose **Manual Deploy → Deploy latest commit**, then wait for Live. Open:
 
@@ -40,7 +42,7 @@ Expected response:
 {"ok":true,"api_version":4,"automatic_enrollment":true}
 ```
 
-The health endpoint confirms process initialization, not a fresh database query on each check. Data requests still require working database connectivity.
+The health endpoint confirms process initialization, not a fresh database query on each check. Data requests still require working database connectivity. When `APP_RELEASE_VERSION` is set, the same response also carries `latest_app_version` and, if you gave one, `latest_app_url`.
 
 ## 3. Redeploy the existing dashboard
 
@@ -59,7 +61,7 @@ If your already working Static Site instead uses Root Directory dashboard, keep 
 
 VITE_SERVER_URL is compiled into the dashboard: choose **Save, rebuild, and deploy** after changing it. Open your existing dashboard URL and sign in using your existing backend dashboard credentials. The updated page shows **Automatic phone connection**, **Connected phones** and all the tool panels. Optional manual enrollment and legacy pending-request controls remain.
 
-The backend's DASHBOARD_ORIGIN must equal the exact HTTPS origin of that dashboard (no path or trailing slash). The phone uses the backend URL; the dashboard's public address is only for your browser.
+The backend's DASHBOARD_ORIGIN must equal the exact HTTPS origin of that dashboard (no path or trailing slash). If one backend serves the dashboard at several addresses, list them separated by commas and each is matched exactly. The phone uses the backend URL; the dashboard's public address is only for your browser.
 
 ## 4. Install and open the current APK
 

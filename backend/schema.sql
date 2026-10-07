@@ -36,3 +36,15 @@ CREATE INDEX IF NOT EXISTS idx_events_device_created
 
 CREATE INDEX IF NOT EXISTS idx_events_created
     ON events(created_at DESC);
+
+-- One row: the instant from which dashboard sign-ins count as current. Revoking sessions
+-- moves this forward, so tokens issued earlier stop working even though they are well-formed.
+CREATE TABLE IF NOT EXISTS dashboard_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    sessions_valid_from TEXT NOT NULL
+);
+
+-- Deliberately the beginning of time: a fresh install must not end the sign-ins it inherits,
+-- and only an explicit revoke moves this forward.
+INSERT INTO dashboard_state (id, sessions_valid_from) VALUES (1, '1970-01-01T00:00:00.000Z')
+    ON CONFLICT (id) DO NOTHING;

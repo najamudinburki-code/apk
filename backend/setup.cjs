@@ -15,7 +15,10 @@ const secret = crypto.randomBytes(48).toString("base64url");
 fs.writeFileSync(destination, [
   `JWT_SECRET=${secret}`, `DASHBOARD_USERNAME=${username}`,
   `DASHBOARD_PASSWORD=${password}`, "DASHBOARD_ORIGIN=http://localhost:5173",
-  "PORT=3000",
+  "PORT=3000", "TRUST_PROXY_HOPS=0",
+  "# Optional: advertise the newest APK you host so phones can mention an update. See .env.example.",
+  "# APP_RELEASE_VERSION=0.5.0",
+  "# APP_RELEASE_URL=https://example.com/SystemHealth-0.5.0.apk",
   ...(development ? ["# Optional: only the connection string for your Neon dev branch.", "DATABASE_URL="] : []),
   ""
 ].join("\n"), { flag: "wx", mode: 0o600 });

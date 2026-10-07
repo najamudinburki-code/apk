@@ -1,3 +1,8 @@
+Historical snapshot: the file counts below were true for 0.3.x. Since then the socket stack
+(`SyncManager.kt`, `NetworkMonitor.kt`) and the duplicated `EnvironmentScanner.kt` were replaced, and
+`MainActivity.kt` became its own file — see the annotated rows in `docs/FILE-MAP.json` and the
+0.5.0 entry in `docs/CHANGES.md`.
+
 # Source preservation
 
 All 16 previous active Kotlin files are retained. The final active Android source set has 23 Kotlin files. Comparing function names in each previous file with its updated counterpart found no removed function names.

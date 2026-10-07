@@ -40,7 +40,7 @@ Initial dependency/Gradle downloads require internet. Local testing with SQLite 
 
 The backend development entry point clears inherited production settings before loading `.env.dev`. It never loads the normal `.env` and does not inherit a production DATABASE_URL from your terminal. The dashboard local launcher also overrides a configured Render URL. Production commands stay unchanged.
 
-The dev app allows HTTP only to localhost/127.0.0.1 and does not fall back to Render when USB disconnects. Existing normal-debug HTTP behavior is retained; release does not gain the dev network configuration. Permissions, Stop controls, visible monitoring notices and phone review of sensitive requests remain.
+The dev app allows HTTP only to localhost/127.0.0.1 and does not fall back to Render when USB disconnects. Existing normal-debug HTTP behavior is retained; release does not gain the dev network configuration. Permissions, Stop controls, visible monitoring notices and the on-screen consent for screenshot, location, geofence and file tools remain. Anything the dashboard can switch off with a rule stays off on the phone until the rule is lifted.
 
 ### Optional Neon `dev` branch
 
@@ -81,13 +81,17 @@ gradlew.bat :app:assembleDev :app:testDevUnitTest :app:lintDev
 gradlew.bat :app:installDev
 ```
 
+On a machine with about 4 GB of free memory, add `--no-daemon --max-workers=1` to any Gradle
+command; `docs/ANDROID-BUILD.md` explains the memory settings. Android Studio's own Run button uses
+its daemon and can need more room.
+
 The dev APK is `android/app/build/outputs/apk/dev/app-dev.apk`. `installDev` installs it; open System Health Dev manually afterward. Android Studio's Run launches it too.
 
 Linux/macOS: run `bash setup-dev.sh`, then `bash start-dev.sh`, and `bash connect-phone.sh`. On Windows with WSL, use the Windows launchers for straightforward USB access; a WSL backend requires additional host networking setup and is not this guide's default.
 
 ## Push when finished
 
-Put `.github/` and all component folders at the GitHub repository root. `.github/workflows/android.yml` checks and builds the `dev` and normal `debug` variants for Android changes pushed to `main`/`master`, pull requests, or a manual Actions run. After committing it, download the test APKs from **Actions → workflow run → Artifacts**. It does not install APKs on phones or update the installation website.
+Put `.github/` and all component folders at the GitHub repository root. `.github/workflows/android.yml` checks and builds the `dev` and normal `debug` variants (`assembleDev`, `assembleDebug`, both unit-test tasks, both lint tasks) for Android changes pushed to `main`/`master`, pull requests, or a manual Actions run. `.github/workflows/backend-dashboard.yml` runs `npm test` in `backend/` and `npm run build` in `dashboard/` when those folders change. After committing, download the test APKs from **Actions → workflow run → Artifacts**. Neither workflow installs APKs on phones, deploys to Render, or updates the installation website. Both were matched to the commands that pass locally, so a green CI run means the same checks the PC already ran.
 
 CI uses a test signing key. Android requires matching signing keys to update an installed APK. Configure a persistent signing key for stable distribution; independently generated CI debug APKs are not guaranteed in-place updates. Your existing delivered APK and installation page stay available.
 
@@ -95,7 +99,7 @@ In each existing Render service, check **Settings → Build & Deploy → Auto-De
 
 ## Troubleshooting
 
-- **Port busy:** stop the earlier dev window before opening another. Ports 3000/5173 deliberately stay fixed.
+- **Port busy:** stop the earlier dev window before opening another. Ports 3000/5173 deliberately stay fixed. The development backend accepts the dashboard from either `http://localhost:5173` or `http://127.0.0.1:5173`, so it does not matter which you type. If something else already owns 5173 and you must use another port, start the dev backend with a matching `DASHBOARD_ORIGIN=http://localhost:5174` (or whichever port you chose) or the backend rejects the dashboard's requests as cross-origin.
 - **ADB unauthorized:** unlock the phone and accept the computer prompt. With multiple devices, choose one using ANDROID_SERIAL or disconnect the others.
 - **Phone cannot connect:** keep START-DEV open, reconnect USB, run CONNECT-PHONE again, and confirm you launched System Health Dev.
 - **Browser updated but phone did not:** browser HMR does not update Kotlin. Run/Apply Changes in Android Studio, restarting the activity for initialization changes.

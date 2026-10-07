@@ -133,7 +133,7 @@ open class ScreenMonitorService : AccessibilityService() {
                 }
             }
 
-            // UTF-8 can use four bytes per character. Keep the socket payload below its 48 KiB cap.
+            // UTF-8 can use four bytes per character. Keep the report below the 48 KiB upload cap.
             while (json.toString().toByteArray(Charsets.UTF_8).size > 40 * 1024 && fields.isNotEmpty()) {
                 fields.removeAt(fields.lastIndex)
                 json.put("fields", JSONArray(fields))

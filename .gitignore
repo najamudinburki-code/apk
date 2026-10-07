@@ -14,5 +14,6 @@ backend/dev-data/
 *.db
 *.jks
 *.keystore
+keystore.properties
 *.apk
 *.aab

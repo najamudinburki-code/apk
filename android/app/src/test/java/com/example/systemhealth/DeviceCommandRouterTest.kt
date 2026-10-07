@@ -6,7 +6,7 @@ class DeviceCommandRouterTest {
     // Mirrors ACTIONS in backend/features.cjs; a new server action must be routed here too.
     private val serverActions = setOf(
         "request_status", "request_screenshot", "request_photo", "request_audio", "request_location",
-        "request_scan", "request_audit", "request_files", "request_backup"
+        "request_scan", "request_geofence", "request_settings"
     )
 
     @Test fun everyServerActionHasARoute() {
@@ -15,13 +15,24 @@ class DeviceCommandRouterTest {
     }
 
     @Test fun reportOnlyToolsRunWithoutAWindow() {
-        listOf("request_status", "request_audit", "request_backup").forEach {
+        listOf("request_status", "request_scan").forEach {
             assertEquals(DeviceCommandRouter.Mode.SILENT, DeviceCommandRouter.route(it))
         }
     }
 
-    @Test fun captureToolsNeedAVisibleScreen() {
-        listOf("request_photo", "request_screenshot", "request_audio", "request_location", "request_scan", "request_files")
+    @Test fun dashboardRulesApplyWithoutAWindowAndWithoutOwnerApproval() {
+        // Rules can only narrow behaviour, so they never need a visible prompt.
+        assertEquals(DeviceCommandRouter.Mode.SILENT, DeviceCommandRouter.route("request_settings"))
+    }
+
+    @Test fun photoAndMicrophoneRunHeadlessWithoutOpeningTheApp() {
+        listOf("request_photo", "request_audio").forEach {
+            assertEquals(DeviceCommandRouter.Mode.CAPTURE, DeviceCommandRouter.route(it))
+        }
+    }
+
+    @Test fun toolsThatNeedAndroidConsentStillNeedAVisibleScreen() {
+        listOf("request_screenshot", "request_location", "request_geofence")
             .forEach { assertEquals(DeviceCommandRouter.Mode.USER, DeviceCommandRouter.route(it)) }
     }
 

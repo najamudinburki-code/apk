@@ -47,6 +47,23 @@ internal object AutomaticEnrollment {
             SyncSettingsStore.savePending(c, it)
             initializeAutoStart(c)
         }
+        negotiate(c, settings)
+    }
+
+    /** A backend rebuilt from an empty database has simply forgotten this phone, which the same
+     *  automatic join can repair. A token the owner rotated deliberately cannot be healed here:
+     *  only the dashboard can issue that, so this says so instead of retrying forever. */
+    suspend fun renew(context: Context): Result = withContext(Dispatchers.IO) {
+        val c = context.applicationContext
+        val saved = SyncSettingsStore.load(c)
+            ?: return@withContext Result("missing", "No saved enrollment to renew.")
+        if (saved.serverUrl != SERVER_URL)
+            return@withContext Result("manual", "This phone uses a hand-entered server, so its credential changes only from the dashboard.")
+        runCatching { negotiate(c, saved) }
+            .getOrElse { Result("unauthorized", it.message ?: "The backend rejected this enrollment.") }
+    }
+
+    private suspend fun negotiate(c: Context, settings: SyncSettings): Result {
         val response = call(settings, "/api/enrollment/status")
         var state = response.optString("state")
         if (state == "missing" || state == "expired" || state == "pending") {
@@ -55,7 +72,7 @@ internal object AutomaticEnrollment {
                 .put("device_id", settings.deviceId).put("device_token", settings.deviceToken)
                 .put("installation_key", InstallationEnrollment.KEY).put("name", name)).getString("state")
         }
-        when (state) {
+        return when (state) {
             "approved" -> {
                 SyncSettingsStore.markApproved(c)
                 Result(state, "Connected automatically. Starting health monitoring.", settings.deviceId)

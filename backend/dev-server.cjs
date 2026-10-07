@@ -16,16 +16,19 @@ for (const key of [
   "JWT_SECRET", "DASHBOARD_USERNAME", "DASHBOARD_PASSWORD", "DASHBOARD_ORIGIN",
   "DATABASE_URL", "DATABASE_PATH", "PG_SSL_MODE", "RENDER", "HOST", "PORT",
   "TLS_CERT_PATH", "TLS_KEY_PATH", "TRUST_PROXY_HOPS", "AUTO_ENROLLMENT_KEY_HASH",
+  "APP_RELEASE_VERSION", "APP_RELEASE_URL",
 ]) delete process.env[key];
 for (const key of [
   "JWT_SECRET", "DASHBOARD_USERNAME", "DASHBOARD_PASSWORD", "DATABASE_URL",
-  "PG_SSL_MODE", "AUTO_ENROLLMENT_KEY_HASH",
+  "PG_SSL_MODE", "AUTO_ENROLLMENT_KEY_HASH", "APP_RELEASE_VERSION", "APP_RELEASE_URL",
 ]) if (settings[key] !== undefined) process.env[key] = settings[key];
 
 process.env.NODE_ENV = "development";
 process.env.PORT = "3000";
 process.env.HOST = "127.0.0.1";
-process.env.DASHBOARD_ORIGIN = "http://localhost:5173";
+// Browsers reach a local dashboard as either loopback name, and the origin they
+// send depends on which one was typed, so the development backend accepts both.
+process.env.DASHBOARD_ORIGIN = "http://localhost:5173,http://127.0.0.1:5173";
 process.env.DATABASE_PATH = path.join(__dirname, "dev-data", "devices.sqlite");
 process.env.TRUST_PROXY_HOPS = "0";
 console.log(process.env.DATABASE_URL

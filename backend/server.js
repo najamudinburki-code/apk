@@ -5,6 +5,8 @@
 // DASHBOARD_USERNAME
 // DASHBOARD_PASSWORD: at least 16 characters.
 // DASHBOARD_ORIGIN: dashboard origin, e.g. https://dashboard.example.com
+//   A comma-separated list is allowed when one backend serves several dashboard
+//   addresses; each entry is compared as an exact origin, never as a prefix.
 
 "use strict";
 
@@ -41,14 +43,42 @@ async function main() {
     throw new Error("Missing or invalid required environment variables.");
   }
 
-  const allowedOrigin = new URL(DASHBOARD_ORIGIN).origin;
-  const MAX_JSON_BYTES = 48 * 1024;
+  const allowedOrigins = new Set(
+    DASHBOARD_ORIGIN.split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map((value) => new URL(value).origin)
+  );
   const JWT_ISSUER = "device-management";
   const JWT_AUDIENCE = "dashboard";
 
   const automaticEnrollmentHash = installationKeyHash();
   const db = await createStore();
-  const { queries, saveTelemetry } = db;
+  const { queries } = db;
+
+  // SQLite stores UTC text and PostgreSQL a Date; both describe the same instant here.
+  function stampMillis(value) {
+    if (!value) return 0;
+    const text = value instanceof Date ? value.toISOString() : String(value);
+    const stamped = /Z|[+-]\d\d:?\d\d$/.test(text) ? text : `${text.replace(" ", "T")}Z`;
+    const parsed = Date.parse(stamped);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
+  // A dashboard token is self-contained and cannot be recalled once handed out, so this one stored
+  // instant is what ends a sign-in early: anything issued before it stops working, and it survives
+  // a restart because it lives in the database. Tokens carry whole-second issue times, so the
+  // boundary is a second wide: a sign-in made in the same second as the revoke still counts as
+  // current, which is what lets the owner sign straight back in.
+  let sessionsValidFrom = 0;
+  const wholeSecond = (value) => Math.floor(value / 1000) * 1000;
+  async function storedWatermark() {
+    return stampMillis((await queries.sessionsValidFrom.get())?.sessions_valid_from);
+  }
+  async function loadSessionWatermark() {
+    sessionsValidFrom = wholeSecond(await storedWatermark());
+  }
+  await loadSessionWatermark();
 
   function hash(value) {
     return crypto.createHash("sha256").update(value).digest();
@@ -68,20 +98,6 @@ async function main() {
     );
   }
 
-  function serializeObject(value) {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) {
-      throw new Error("Payload must be a JSON object.");
-    }
-
-    const serialized = JSON.stringify(value);
-
-    if (Buffer.byteLength(serialized, "utf8") > MAX_JSON_BYTES) {
-      throw new Error("Payload is too large.");
-    }
-
-    return serialized;
-  }
-
   function verifyDashboardToken(token) {
     if (typeof token !== "string" || token.length > 4096) {
       throw new Error("Invalid token.");
@@ -99,6 +115,11 @@ async function main() {
       !Number.isInteger(claims.exp)
     ) {
       throw new Error("Invalid dashboard claims.");
+    }
+
+    // Anything issued before the stored instant was ended by “Sign out everywhere”.
+    if (!Number.isInteger(claims.iat) || claims.iat * 1000 < sessionsValidFrom) {
+      throw new Error("This sign-in has been ended.");
     }
 
     return claims;
@@ -127,12 +148,12 @@ async function main() {
   app.use((req, res, next) => {
     const origin = req.headers.origin;
 
-    if (origin && origin !== allowedOrigin) {
+    if (origin && !allowedOrigins.has(origin)) {
       return res.status(403).json({ error: "Origin not allowed" });
     }
 
     if (origin) {
-      res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+      res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Device-Id");
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
@@ -153,10 +174,17 @@ async function main() {
   const fileJson = express.json({ limit: "6mb", strict: true });
   app.use((req, res, next) => (req.path === "/api/device/files" ? fileJson : smallJson)(req, res, next));
 
+  // Phones compare this against their own build. Named apart from the telemetry field
+  // app_version, which reports what a single phone currently runs.
+  const appRelease = process.env.APP_RELEASE_VERSION ? {
+    latest_app_version: process.env.APP_RELEASE_VERSION,
+    ...(process.env.APP_RELEASE_URL ? { latest_app_url: process.env.APP_RELEASE_URL } : {}),
+  } : {};
+
   app.get("/health", (req, res) => {
     if (shuttingDown) return res.status(503).json({ ok: false });
     // Startup initialized the database. Avoid waking cloud compute on every health probe.
-    res.json({ ok: true, api_version: 4, automatic_enrollment: Boolean(automaticEnrollmentHash) });
+    res.json({ ok: true, api_version: 4, automatic_enrollment: Boolean(automaticEnrollmentHash), ...appRelease });
   });
 
   const { TLS_CERT_PATH, TLS_KEY_PATH } = process.env;
@@ -171,13 +199,13 @@ async function main() {
     : http.createServer(app);
   const io = new Server(server, {
     cors: {
-      origin: allowedOrigin,
+      origin: [...allowedOrigins],
       methods: ["GET", "POST"],
     },
     allowRequest: (req, callback) => {
       callback(
         null,
-        !req.headers.origin || req.headers.origin === allowedOrigin
+        !req.headers.origin || allowedOrigins.has(req.headers.origin)
       );
     },
     maxHttpBufferSize: 64 * 1024,
@@ -217,15 +245,42 @@ async function main() {
     }
   );
 
+  /** Ends every dashboard sign-in now, not at its scheduled expiry, and keeps working after a
+   *  restart because the instant lives in the database. Phones are untouched: their credentials
+   *  are separate, and each device still has its own disable control. */
+  async function revokeDashboardSessions() {
+    await queries.revokeSessions.run();
+    // Never trust another machine's clock backwards: this moment is at least now.
+    sessionsValidFrom = wholeSecond(Math.max(await storedWatermark(), Date.now()));
+    for (const socket of await io.in("dashboards").fetchSockets()) socket.disconnect(true);
+  }
+
+  app.post(
+    "/api/sessions/revoke",
+    authenticateDashboard,
+    rateLimit({ windowMs: 60_000, limit: 6, standardHeaders: "draft-7", legacyHeaders: false }),
+    async (req, res, next) => {
+      try {
+        await revokeDashboardSessions();
+        res.json({ ok: true, ended: "every dashboard sign-in on this server" });
+      } catch (error) { next(error); }
+    }
+  );
+
+  // Phones deliver over HTTP and refresh last_seen on every poll, so recent contact — not a live
+  // socket — is all "online" can honestly mean now.
+  function recentlySeen(value) {
+    const seen = stampMillis(value);
+    return seen > 0 && Date.now() - seen < 45_000;
+  }
+
   app.get("/api/devices", authenticateDashboard, async (req, res) => {
     const devices = (await queries.listDevices.all()).map((device) => ({
       ...device,
       latest_payload: device.latest_payload ? JSON.parse(device.latest_payload) : null,
       latest_health: device.latest_health ? JSON.parse(device.latest_health) : null,
       enabled: Boolean(device.enabled),
-      online: Boolean(
-        io.sockets.adapter.rooms.get(`device:${device.device_id}`)?.size
-      ),
+      online: recentlySeen(device.last_seen),
     }));
 
     res.json({ devices });
@@ -234,15 +289,20 @@ async function main() {
   app.get("/api/events", authenticateDashboard, async (req, res) => {
     const target = req.query.device_id ?? null;
     const value = req.query.limit ?? "100";
+    const type = req.query.type ?? null;
+    const after = req.query.after ?? null;
     if ((target !== null && !validDeviceId(target)) ||
         typeof value !== "string" || !/^\d+$/.test(value) ||
-        Number(value) < 1 || Number(value) > 200) {
-      return res.status(400).json({ error: "Invalid device_id or limit (1-200)" });
+        Number(value) < 1 || Number(value) > 200 ||
+        (type !== null && !/^[A-Za-z0-9_-]{1,40}$/.test(type)) ||
+        (after !== null && !/^\d{1,19}$/.test(after))) {
+      return res.status(400).json({ error: "Invalid device_id, limit (1-200), type or after" });
     }
-    const events = (await queries.listEvents.all(target, target, Number(value))).map(event => ({
-      ...event,
-      payload: JSON.parse(event.payload),
-    }));
+    // `after` is the lowest event id already shown, so a phone can keep appending while the
+    // owner pages backwards through history without repeating or skipping a row.
+    const events = (await queries.listEvents.all(
+      target, target, type, type, after ? Number(after) : null, after ? Number(after) : null, Number(value)
+    )).map(event => ({ ...event, payload: JSON.parse(event.payload) }));
     res.json({ events });
   });
 
@@ -278,12 +338,6 @@ async function main() {
     }
   });
 
-  function disconnectDeviceSockets(id) {
-    for (const socketId of io.sockets.adapter.rooms.get(`device:${id}`) || []) {
-      io.sockets.sockets.get(socketId)?.disconnect(true);
-    }
-  }
-
   // Revoking access is rare, so cap it: a leaked dashboard token must not be able to
   // rotate or disable every phone in a loop.
   const manageLimiter = rateLimit({ windowMs: 60_000, limit: 15, standardHeaders: "draft-7", legacyHeaders: false });
@@ -300,7 +354,7 @@ async function main() {
       // Keep a pending enrollment in sync so approving it cannot restore the old credential.
       await db.features.query("UPDATE enrollment_requests SET token_hash=? WHERE device_id=? AND status='pending'",
         [hash(deviceToken).toString("hex"), id], "run");
-      disconnectDeviceSockets(id);
+      // The next HTTP call with the old token is rejected, so nothing else needs dropping.
       res.json({ device_id: id, device_token: deviceToken, replaces: true });
     } catch (error) { next(error); }
   });
@@ -314,8 +368,22 @@ async function main() {
     if (!device) return res.status(404).json({ error: "Device not found" });
     try {
       await queries.setDeviceEnabled.run(req.body.enabled ? 1 : 0, id);
-      if (!req.body.enabled) disconnectDeviceSockets(id);
       res.json({ device_id: id, enabled: req.body.enabled });
+    } catch (error) { next(error); }
+  });
+
+  // A household with several phones needs readable names; the device id stays immutable.
+  app.post("/api/devices/:id/name", authenticateDashboard, manageLimiter, async (req, res, next) => {
+    const id = req.params.id;
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    if (!validDeviceId(id) || !name || name.length > 200) {
+      return res.status(400).json({ error: "Invalid device_id or name" });
+    }
+    const device = await queries.findDevice.get(id);
+    if (!device) return res.status(404).json({ error: "Device not found" });
+    try {
+      await queries.setDeviceName.run(name, id);
+      res.json({ device_id: id, name });
     } catch (error) { next(error); }
   });
 
@@ -342,45 +410,14 @@ async function main() {
   installEnrollment({ app, db, authenticateDashboard, validDeviceId, io, installationKeyHash: automaticEnrollmentHash });
 
   // Dashboard handshake: { auth: { role: "dashboard", token: "<JWT>" } }
-  // Device handshake:
-  // { auth: { role: "device", device_id: "...", token: "<device_token>" } }
+  // Phones never open a socket; they deliver and poll over authenticated HTTP.
   io.use(async (socket, next) => {
     const auth = socket.handshake.auth || {};
 
     try {
-      if (auth.role === "dashboard") {
-        socket.data.role = "dashboard";
-        socket.data.claims = verifyDashboardToken(auth.token);
-      } else if (auth.role === "device") {
-        if (
-          !validDeviceId(auth.device_id) ||
-          typeof auth.token !== "string" ||
-          auth.token.length > 256
-        ) {
-          throw new Error("Invalid device credentials.");
-        }
-
-        const device = await queries.findDevice.get(auth.device_id);
-
-        if (
-          !device ||
-          !device.enabled ||
-          !crypto.timingSafeEqual(
-            hash(auth.token),
-            Buffer.from(device.token_hash, "hex")
-          )
-        ) {
-          throw new Error("Invalid device credentials.");
-        }
-
-        socket.data.role = "device";
-        socket.data.deviceId = device.device_id;
-        // Remembered so a later rotation or re-enrollment invalidates this live connection.
-        socket.data.tokenHash = device.token_hash;
-      } else {
-        throw new Error("Invalid role.");
-      }
-
+      if (auth.role !== "dashboard") throw new Error("Invalid role.");
+      socket.data.role = "dashboard";
+      socket.data.claims = verifyDashboardToken(auth.token);
       next();
     } catch {
       next(new Error("Unauthorized"));
@@ -388,115 +425,15 @@ async function main() {
   });
 
   io.on("connection", (socket) => {
-    const isDashboard = socket.data.role === "dashboard";
-    const deviceId = socket.data.deviceId;
+    socket.join("dashboards");
 
-    if (isDashboard) {
-      socket.join("dashboards");
+    // A JWT lives an hour; a socket must not outlive the session it was opened with.
+    const expiryTimer = setTimeout(() => {
+      socket.disconnect(true);
+    }, Math.max(0, socket.data.claims.exp * 1000 - Date.now()));
 
-      const expiryTimer = setTimeout(() => {
-        socket.disconnect(true);
-      }, Math.max(0, socket.data.claims.exp * 1000 - Date.now()));
-
-      expiryTimer.unref();
-      socket.on("disconnect", () => clearTimeout(expiryTimer));
-    } else {
-      socket.join(`device:${deviceId}`);
-      Promise.resolve(queries.touchDevice.run(deviceId)).catch(() => {
-        console.error("Could not update device connection time.");
-      });
-      io.to("dashboards").emit("device:status", {
-        device_id: deviceId,
-        online: true,
-      });
-    }
-
-    let windowStart = Date.now();
-    let eventCount = 0;
-
-    function respond(ack, result) {
-      if (typeof ack === "function") {
-        ack(result);
-      } else if (!result.ok) {
-        socket.emit("server:error", result);
-      }
-    }
-
-    async function authorize(requiredRole) {
-      if (socket.data.role !== requiredRole) {
-        throw new Error("Forbidden.");
-      }
-
-      if (
-        requiredRole === "dashboard" &&
-        socket.data.claims.exp * 1000 <= Date.now()
-      ) {
-        socket.disconnect(true);
-        throw new Error("Token expired.");
-      }
-
-      if (requiredRole === "device") {
-        const device = await queries.findDevice.get(deviceId);
-
-        if (!device?.enabled) {
-          socket.disconnect(true);
-          throw new Error("Device disabled.");
-        }
-
-        // A rotation between handshake and now must not leave the old credential working.
-        if (device.token_hash !== socket.data.tokenHash) {
-          socket.disconnect(true);
-          throw new Error("Device credentials changed.");
-        }
-      }
-
-      const now = Date.now();
-
-      if (now - windowStart >= 1000) {
-        windowStart = now;
-        eventCount = 0;
-      }
-
-      if (++eventCount > 30) {
-        throw new Error("Rate limit exceeded.");
-      }
-    }
-
-    socket.on("data:receive", async (payload, ack) => {
-      try {
-        await authorize("device");
-
-        // Identity comes from authentication, never from the supplied payload.
-        const serialized = serializeObject(payload);
-        const eventId = await saveTelemetry(deviceId, serialized);
-
-        io.to("dashboards").emit("data:received", {
-          event_id: eventId,
-          device_id: deviceId,
-          payload: JSON.parse(serialized),
-        });
-
-        respond(ack, { ok: true, event_id: eventId });
-      } catch (error) {
-        if (error.code) {
-          console.error("Telemetry persistence failed.");
-          return respond(ack, { ok: false, error: "Persistence failed." });
-        }
-
-        respond(ack, { ok: false, error: error.message });
-      }
-    });
-
-    socket.on("disconnect", () => {
-      if (!isDashboard) {
-        io.to("dashboards").emit("device:status", {
-          device_id: deviceId,
-          online: Boolean(
-            io.sockets.adapter.rooms.get(`device:${deviceId}`)?.size
-          ),
-        });
-      }
-    });
+    expiryTimer.unref();
+    socket.on("disconnect", () => clearTimeout(expiryTimer));
   });
 
   app.use((error, req, res, next) => {

@@ -19,6 +19,7 @@ object ConnectionDiagnostics {
         val result = try {
             val health = get(settings, "/health", false)
             check(health.optBoolean("ok")) { "Server health check did not pass." }
+            UpdateAwareness.record(context, settings.serverUrl, health)
             val device = get(settings, "/api/device/requests", true)
             check(device.has("requests")) { "Update the backend before using device tools." }
             Result(true, "Server reachable and phone credentials accepted.")

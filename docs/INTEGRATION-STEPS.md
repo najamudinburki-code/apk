@@ -1,3 +1,7 @@
+Historical snapshot: kept because it records how the separate original bundles were merged. The
+live procedure is `../START-HERE.md` and `../RENDER-SETUP.md`; current architecture is in
+`docs/FEATURE-STATUS.md`.
+
 # Current integration steps
 
 Follow ../START-HERE.md for building in Android Studio, server/dashboard setup, phone enrollment, and optional capture consent.

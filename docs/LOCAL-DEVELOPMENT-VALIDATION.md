@@ -1,6 +1,7 @@
 # Local development update verification
 
-Source-only workflow update for app 0.4.0, checked 2026-10-05.
+Source-only workflow update for app 0.4.0, checked 2026-10-05. Frozen record: the counts below were
+true for 0.4.0. For the current numbers see the 0.5.0 section of `VALIDATION.md`.
 
 - Android `assembleDev` and normal `assembleDebug`: passed. Dev package/name are separate; the dev API is loopback. Normal debug and release BuildConfig values remain the Render URL/original package. Release manifest has no development HTTP configuration.
 - Android unit checks: 21 passed in each of dev and normal debug variants; zero failures, errors or skipped tests.

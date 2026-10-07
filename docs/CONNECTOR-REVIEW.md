@@ -1,3 +1,8 @@
+Historical snapshot: this review describes the 0.2/0.3 source layout, including `SyncManager`,
+`NetworkMonitor` and a `MainActivity` nested inside `CoreService.kt`. None of those are current —
+the phone has one HTTP path in `FeatureBridge.kt` and `MainActivity` has its own file. Read
+`docs/FEATURE-STATUS.md`, `docs/CHANGES.md` and `../DEV-HANDOFF.md` for the live architecture.
+
 # Connector review
 
 The applicationId and namespace are com.example.systemhealth. Source packages retain their names; imports and fully qualified manifest names connect them. MainActivity is inside CoreService.kt. ParentalCapture is inside AccessibilityHelperService.kt; do not add duplicate classes.

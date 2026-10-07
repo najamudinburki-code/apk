@@ -1,0 +1,49 @@
+name: Test backend and build dashboard
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths: ["backend/**", "dashboard/**", ".github/workflows/backend-dashboard.yml"]
+  pull_request:
+    paths: ["backend/**", "dashboard/**", ".github/workflows/backend-dashboard.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      # The integration suite starts the real server against a throwaway SQLite file, so it needs
+      # no secrets. DATABASE_URL stays unset on purpose: a CI run must never reach a live database.
+      - run: npm ci
+      - run: npm test
+
+  dashboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      # No VITE_SERVER_URL here: the build must succeed with the compiled-in default, and a URL
+      # belongs in deployment, not in a pull-request check.
+      - run: npm ci
+      - run: npm run build

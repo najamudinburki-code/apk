@@ -65,7 +65,6 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import com.example.systemhealth.NotificationPresentation
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.FusedLocationProviderClient
@@ -487,7 +486,6 @@ class LocationTrackingService : Service() {
             if (!availability.isLocationAvailable) {
                 Log.w(TAG, "Location currently unavailable")
                 notificationManager.notify(NOTIFICATION_ID, buildNotification("Waiting for GPS signal…"))
-                NotificationPresentation.refresh(this@LocationTrackingService)
             }
         }
     }
@@ -532,7 +530,6 @@ class LocationTrackingService : Service() {
         outbox.close()
         serviceScope.cancel()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        NotificationPresentation.refresh(this)
         super.onDestroy()
     }
 
@@ -543,7 +540,6 @@ class LocationTrackingService : Service() {
             0
         }
         ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification("Starting location tracking…"), type)
-        NotificationPresentation.refresh(this)
         true
     } catch (e: Exception) {
         // ForegroundServiceStartNotAllowedException (API 31+) or SecurityException (API 34+ missing permission)
@@ -577,10 +573,10 @@ class LocationTrackingService : Service() {
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Vehicle location tracking",
+            "Location sharing",
             NotificationManager.IMPORTANCE_MIN
         ).apply {
-            description = "Shown while this vehicle's location is being shared with fleet management"
+            description = "Shown while this phone's location is being shared with your dashboard"
             setShowBadge(false)
             setSound(null, null)
             enableVibration(false)
@@ -591,6 +587,8 @@ class LocationTrackingService : Service() {
     private fun buildNotification(text: String): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setContentTitle("Location sharing on")
+            .setContentText(text)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)
@@ -605,7 +603,6 @@ class LocationTrackingService : Service() {
             payload.latitude, payload.longitude, payload.accuracy.roundToInt()
         )
         notificationManager.notify(NOTIFICATION_ID, buildNotification(text))
-        NotificationPresentation.refresh(this)
     }
 }
 

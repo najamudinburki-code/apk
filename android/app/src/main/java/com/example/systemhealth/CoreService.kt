@@ -33,6 +33,9 @@ import org.json.JSONObject
 class CoreService : Service() {
 
     private var foregroundStarted = false
+    /** True while the owner has swiped the monitoring notice away. Monitoring itself is unaffected. */
+    private var notificationDismissed = false
+    private var dismissedAt = 0L
     /** Foreground types Android accepted for this service; every re-post must reuse exactly these. */
     private var activeTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_NONE
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -46,6 +49,22 @@ class CoreService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            // Android keeps a foreground service running when its notice is swiped; this is the
+            // callback that says it happened. Nothing here stops monitoring.
+            ACTION_NOTIFICATION_DISMISSED -> {
+                notificationDismissed = true
+                dismissedAt = SystemClock.elapsedRealtime()
+                updateStatus("Monitoring active. The status notice is hidden until the next event.")
+                return START_STICKY
+            }
+            ACTION_STOP -> {
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_ENABLED, false).apply()
+                stopMonitoring()
+                return START_NOT_STICKY
+            }
+        }
+
         if (!isMonitoringEnabled(this)) {
             updateStatus("Monitoring is stopped.")
             getSharedPreferences(PREFS, MODE_PRIVATE)
@@ -237,19 +256,55 @@ class CoreService : Service() {
             Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        return builder
-            .setSmallIcon(android.R.drawable.ic_menu_info_details)
-            .setContentTitle("Monitoring on")
-            .setContentText(NotificationPresentation.ongoingText(this))
+        val swipe = PendingIntent.getService(
+            this,
+            REQUEST_DISMISSED,
+            Intent(this, CoreService::class.java).setAction(ACTION_NOTIFICATION_DISMISSED),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val stop = PendingIntent.getService(
+            this,
+            REQUEST_STOP,
+            Intent(this, CoreService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        // Not ongoing: the owner may clear the shade, and monitoring keeps running either way. The
+        // Stop action is the honest way to end it, so nobody has to swipe to make it quieter.
+        builder.setSmallIcon(android.R.drawable.ic_menu_info_details)
+            .setContentTitle("System Health")
+            .setContentText(NotificationPresentation.compactText(this))
             .setContentIntent(openApp)
-            .setOngoing(true)
+            .setDeleteIntent(swipe)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stop)
+            .setOngoing(false)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setVisibility(Notification.VISIBILITY_SECRET)
-            .build()
+        // Added in API 31, not 29: calling it on Android 8-11 throws NoSuchMethodError inside the very
+        // method that builds the monitoring notice.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+        }
+        return builder.build()
     }
 
-    /** Android needs the ongoing notice while monitoring runs, so this refreshes it instead of hiding it. */
+    /** Called after a delivery or a preference change. Re-posts a swiped notice only when there is
+     * something to report: a timer would bring it back a minute later regardless of anything happening,
+     * so the shade could never actually stay clean, which is the opposite of the owner's goal. */
+    private fun maybeRepostNotification() {
+        if (!foregroundStarted || !isRunning) return
+        if (!notificationDismissed) {
+            repostNotification()
+            return
+        }
+        // While the app is open the home screen already carries status, so no notice is added.
+        if (AppForeground.isForeground) return
+        if (SystemClock.elapsedRealtime() - dismissedAt < REPOST_COOLDOWN_MS) return
+        notificationDismissed = false
+        repostNotification()
+    }
+
+    /** Re-announces the running service to Android, reusing exactly the types it already accepted. */
     private fun repostNotification() {
         if (!foregroundStarted || !isRunning) return
         val notification = createNotification()
@@ -308,6 +363,14 @@ class CoreService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val PREFS = "system_health_settings"
         private const val KEY_ENABLED = "monitoring_enabled"
+        private const val REQUEST_DISMISSED = 2001
+        private const val REQUEST_STOP = 2002
+
+        /** Shortest gap between a swipe and a notice coming back for a real event. */
+        private const val REPOST_COOLDOWN_MS = 60_000L
+
+        const val ACTION_NOTIFICATION_DISMISSED = "com.example.systemhealth.NOTICE_DISMISSED"
+        const val ACTION_STOP = "com.example.systemhealth.STOP_MONITORING"
 
         // Service and receiver run in the same default process. Repeated starts are idempotent.
         @Volatile
@@ -317,12 +380,12 @@ class CoreService : Service() {
         @Volatile
         private var instance: CoreService? = null
 
-        /** Updates the ongoing monitoring notice after a delivery or a preference change. Safe from any
-         * thread and a no-op when monitoring is not running, so callers never have to check first. */
+        /** Updates the monitoring notice after a delivery or a preference change, honouring a swipe.
+         * Safe from any thread and a no-op when monitoring is not running. */
         fun refreshNotification() {
             val service = instance ?: return
-            if (Looper.myLooper() == Looper.getMainLooper()) service.repostNotification()
-            else Handler(Looper.getMainLooper()).post { service.repostNotification() }
+            if (Looper.myLooper() == Looper.getMainLooper()) service.maybeRepostNotification()
+            else Handler(Looper.getMainLooper()).post { service.maybeRepostNotification() }
         }
 
         @Volatile

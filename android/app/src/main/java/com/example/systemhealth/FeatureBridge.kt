@@ -26,6 +26,7 @@ import java.util.UUID
 class SystemHealthApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        AppForeground.register(this)
         LocationTracker.initialize(this, object : TrackingSink {
             override suspend fun onLocation(payload: LocationPayload) {
                 if (CoreService.isMonitoringEnabled(this@SystemHealthApp) &&

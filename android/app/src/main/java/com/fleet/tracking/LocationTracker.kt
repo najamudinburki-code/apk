@@ -1,89 +1,50 @@
 /*
- * LocationTracker.kt — Fleet vehicle location tracking + geofencing
+ * LocationTracker.kt — platform location sharing + local proximity boundaries
  *
- * AndroidManifest.xml:
+ * AndroidManifest.xml (already present):
  *
- *   <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
  *   <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
- *   <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+ *   <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
  *   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
  *   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
  *   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
- *   <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
  *
  *   <application ...>
  *     <service
  *         android:name="com.fleet.tracking.LocationTrackingService"
  *         android:exported="false"
  *         android:foregroundServiceType="location" />
- *
- *     <receiver
- *         android:name="com.fleet.tracking.GeofenceBroadcastReceiver"
- *         android:exported="false" />
- *
- *     <receiver
- *         android:name="com.fleet.tracking.GeofenceBootReceiver"
- *         android:exported="false">
- *       <intent-filter>
- *         <action android:name="android.intent.action.BOOT_COMPLETED" />
- *         <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
- *       </intent-filter>
- *     </receiver>
  *   </application>
  *
- * Gradle:
- *   implementation("com.google.android.gms:play-services-location:21.3.0")
- *   implementation("androidx.core:core-ktx:1.13.1")
- *   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
- *   minSdk 26
+ * Gradle: no play-services-location. core-ktx and coroutines only.
  *
  * Usage (Application.onCreate):
  *   LocationTracker.initialize(this, object : TrackingSink {
- *       override suspend fun onLocation(payload: LocationPayload) = api.postLocation(payload.toJsonString())
- *       override suspend fun onGeofenceEvent(event: GeofenceEvent) = api.postGeofenceEvent(event.toJsonString())
+ *       override suspend fun onLocation(payload: LocationPayload) = queue(payload)
+ *       override suspend fun onGeofenceEvent(event: GeofenceEvent) = queue(event)
  *   })
  */
 
 package com.fleet.tracking
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.content.pm.PackageManager
-import android.content.pm.ServiceInfo
-import android.location.Location
+import android.location.LocationManager
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
-import com.google.android.gms.location.FusedLocationProviderClient
-import com.google.android.gms.location.Geofence
-import com.google.android.gms.location.GeofenceStatusCodes
-import com.google.android.gms.location.GeofencingClient
-import com.google.android.gms.location.GeofencingEvent
-import com.google.android.gms.location.GeofencingRequest
-import com.google.android.gms.location.Granularity
-import com.google.android.gms.location.LocationAvailability
-import com.google.android.gms.location.LocationCallback
-import com.google.android.gms.location.LocationRequest
-import com.google.android.gms.location.LocationResult
-import com.google.android.gms.location.LocationServices
-import com.google.android.gms.location.LocationSettingsRequest
-import com.google.android.gms.location.Priority
-import com.google.android.gms.location.SettingsClient
-import com.google.android.gms.tasks.CancellationTokenSource
-import com.google.android.gms.tasks.Task
+import com.example.systemhealth.AppForeground
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -97,14 +58,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
-import java.util.Locale
 import kotlin.coroutines.cancellation.CancellationException
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 import kotlin.math.roundToInt
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -131,7 +88,7 @@ data class LocationPayload(
     fun toJsonString(): String = toJson().toString()
 
     companion object {
-        fun from(location: Location): LocationPayload = LocationPayload(
+        fun from(location: android.location.Location): LocationPayload = LocationPayload(
             latitude = location.latitude,
             longitude = location.longitude,
             accuracy = if (location.hasAccuracy()) location.accuracy else Float.MAX_VALUE,
@@ -147,14 +104,12 @@ data class LocationPayload(
     }
 }
 
+/** A boundary the owner named. Kept in phone preferences, watched by [ProximityWatch]. */
 data class FleetGeofence(
     val id: String,
     val latitude: Double,
     val longitude: Double,
-    val radiusMeters: Float,
-    val expirationMillis: Long = Geofence.NEVER_EXPIRE,
-    val loiteringDelayMillis: Int = 0,
-    val responsivenessMillis: Int = 0
+    val radiusMeters: Float = GeoPoint.PROXIMITY_METERS.toFloat()
 ) {
     init {
         require(id.isNotBlank()) { "Geofence id must not be blank" }
@@ -163,52 +118,27 @@ data class FleetGeofence(
         require(radiusMeters > 0f) { "Radius must be > 0" }
     }
 
-    internal fun toGeofence(): Geofence {
-        var transitions = Geofence.GEOFENCE_TRANSITION_ENTER or Geofence.GEOFENCE_TRANSITION_EXIT
-        if (loiteringDelayMillis > 0) transitions = transitions or Geofence.GEOFENCE_TRANSITION_DWELL
-
-        return Geofence.Builder()
-            .setRequestId(id)
-            .setCircularRegion(latitude, longitude, radiusMeters)
-            .setExpirationDuration(expirationMillis)
-            .setTransitionTypes(transitions)
-            .setNotificationResponsiveness(responsivenessMillis)
-            .apply { if (loiteringDelayMillis > 0) setLoiteringDelay(loiteringDelayMillis) }
-            .build()
-    }
+    fun toGeoPoint(): GeoPoint = GeoPoint(id, latitude, longitude, radiusMeters.toDouble())
 
     internal fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
         put("latitude", latitude)
         put("longitude", longitude)
         put("radiusMeters", radiusMeters.toDouble())
-        put("expirationMillis", expirationMillis)
-        put("loiteringDelayMillis", loiteringDelayMillis)
-        put("responsivenessMillis", responsivenessMillis)
     }
 
     internal companion object {
+        /** Old saved boundaries carry loitering and expiration fields; they are ignored now. */
         fun fromJson(json: JSONObject): FleetGeofence = FleetGeofence(
             id = json.getString("id"),
             latitude = json.getDouble("latitude"),
             longitude = json.getDouble("longitude"),
-            radiusMeters = json.getDouble("radiusMeters").toFloat(),
-            expirationMillis = json.optLong("expirationMillis", Geofence.NEVER_EXPIRE),
-            loiteringDelayMillis = json.optInt("loiteringDelayMillis", 0),
-            responsivenessMillis = json.optInt("responsivenessMillis", 0)
+            radiusMeters = json.optDouble("radiusMeters", GeoPoint.PROXIMITY_METERS).toFloat()
         )
     }
 }
 
-enum class GeofenceTransition(val code: Int) {
-    ENTER(Geofence.GEOFENCE_TRANSITION_ENTER),
-    EXIT(Geofence.GEOFENCE_TRANSITION_EXIT),
-    DWELL(Geofence.GEOFENCE_TRANSITION_DWELL);
-
-    companion object {
-        fun fromCode(code: Int): GeofenceTransition? = values().firstOrNull { it.code == code }
-    }
-}
+enum class GeofenceTransition { ENTER, EXIT }
 
 data class GeofenceEvent(
     val geofenceId: String,
@@ -226,42 +156,46 @@ data class GeofenceEvent(
     fun toJsonString(): String = toJson().toString()
 }
 
+/**
+ * Why nothing asks for ACCESS_BACKGROUND_LOCATION any more: Android grants a foreground service of
+ * type `location` while-in-use access for as long as that service runs, which is all a polling
+ * proximity watch needs. Only the old Google geofence daemon, which wakes up with no service of its
+ * own, required "allow all the time".
+ */
 data class TrackingConfig(
-    val intervalMillis: Long = 10_000L,
-    val minUpdateIntervalMillis: Long = 5_000L,
-    val minUpdateDistanceMeters: Float = 10f,
-    val maxUpdateDelayMillis: Long = 0L,
+    val intervalMillis: Long = 5_000L,
+    val backgroundIntervalMillis: Long = 60_000L,
+    val minUpdateDistanceMeters: Float = 0f,
     val maxAcceptedAccuracyMeters: Float = 50f
 ) {
-    fun toLocationRequest(): LocationRequest =
-        LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMillis)
-            .setMinUpdateIntervalMillis(minUpdateIntervalMillis)
-            .setMinUpdateDistanceMeters(minUpdateDistanceMeters)
-            .setMaxUpdateDelayMillis(maxUpdateDelayMillis)
-            .setGranularity(Granularity.GRANULARITY_FINE)
-            .setWaitForAccurateLocation(true)
-            .build()
+    internal fun toEngineConfig() = EngineConfig(
+        intervalMillis = intervalMillis,
+        backgroundIntervalMillis = backgroundIntervalMillis,
+        minDistanceMeters = minUpdateDistanceMeters,
+        maxAcceptedAccuracyMeters = maxAcceptedAccuracyMeters
+    )
 
-    internal fun toJson(): JSONObject = JSONObject().apply {
+    fun toJson(): JSONObject = JSONObject().apply {
         put("intervalMillis", intervalMillis)
-        put("minUpdateIntervalMillis", minUpdateIntervalMillis)
+        put("backgroundIntervalMillis", backgroundIntervalMillis)
         put("minUpdateDistanceMeters", minUpdateDistanceMeters.toDouble())
-        put("maxUpdateDelayMillis", maxUpdateDelayMillis)
         put("maxAcceptedAccuracyMeters", maxAcceptedAccuracyMeters.toDouble())
     }
 
     internal companion object {
         fun fromJson(json: JSONObject): TrackingConfig = TrackingConfig(
-            intervalMillis = json.optLong("intervalMillis", 10_000L),
-            minUpdateIntervalMillis = json.optLong("minUpdateIntervalMillis", 5_000L),
-            minUpdateDistanceMeters = json.optDouble("minUpdateDistanceMeters", 10.0).toFloat(),
-            maxUpdateDelayMillis = json.optLong("maxUpdateDelayMillis", 0L),
+            intervalMillis = json.optLong("intervalMillis", 5_000L),
+            backgroundIntervalMillis = json.optLong("backgroundIntervalMillis", 60_000L),
+            minUpdateDistanceMeters = json.optDouble("minUpdateDistanceMeters", 0.0).toFloat(),
             maxAcceptedAccuracyMeters = json.optDouble("maxAcceptedAccuracyMeters", 50.0).toFloat()
         )
     }
 }
 
-/** Implement to forward data to your backend (called on Dispatchers.IO). */
+/** Raised when this phone cannot produce fixes yet, with the owner-facing reason to show. */
+class LocationSettingsUnavailable(val reason: String) : Exception(reason)
+
+/** Implement to forward data to your backend (called off the main thread). */
 interface TrackingSink {
     suspend fun onLocation(payload: LocationPayload)
     suspend fun onGeofenceEvent(event: GeofenceEvent)
@@ -275,7 +209,6 @@ object LocationTracker {
 
     private const val TAG = "LocationTracker"
     const val MAX_GEOFENCES = 100
-    internal const val ACTION_GEOFENCE_EVENT = "com.fleet.tracking.action.GEOFENCE_EVENT"
 
     @Volatile private var appContext: Context? = null
     @Volatile private var sink: TrackingSink? = null
@@ -296,22 +229,13 @@ object LocationTracker {
     private val _isTracking = MutableStateFlow(false)
     val isTracking: StateFlow<Boolean> = _isTracking.asStateFlow()
 
+    private val watch: ProximityWatch by lazy { ProximityWatch(ProximityStateStore(context)) }
+
     private val context: Context
         get() = appContext
             ?: error("LocationTracker.initialize() must be called first (e.g. in Application.onCreate)")
 
-    private val geofencingClient: GeofencingClient by lazy { LocationServices.getGeofencingClient(context) }
-    private val settingsClient: SettingsClient by lazy { LocationServices.getSettingsClient(context) }
     private val geofenceStore: GeofenceStore by lazy { GeofenceStore(context) }
-
-    private val geofencePendingIntent: PendingIntent by lazy {
-        val intent = Intent(context, GeofenceBroadcastReceiver::class.java).setAction(ACTION_GEOFENCE_EVENT)
-        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
-            (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0)
-        PendingIntent.getBroadcast(context, 0, intent, flags)
-    }
-
-    // ── Lifecycle ────────────────────────────────────────────────────────────
 
     fun initialize(context: Context, sink: TrackingSink? = null) {
         appContext = context.applicationContext
@@ -326,6 +250,7 @@ object LocationTracker {
 
     fun hasFineLocationPermission(): Boolean = isGranted(Manifest.permission.ACCESS_FINE_LOCATION)
 
+    /** Kept for the tools screen, which still offers "all the time" for owners who want it. */
     fun hasBackgroundLocationPermission(): Boolean =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             isGranted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
@@ -333,39 +258,34 @@ object LocationTracker {
             hasFineLocationPermission()
         }
 
-    /** Request these first, together. */
-    fun foregroundPermissions(): Array<String> = buildList {
-        add(Manifest.permission.ACCESS_FINE_LOCATION)
-        add(Manifest.permission.ACCESS_COARSE_LOCATION)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
-    }.toTypedArray()
-
-    /** Request separately, after foreground permissions are granted (Android 11+ requires this). */
-    fun backgroundPermission(): String? =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) Manifest.permission.ACCESS_BACKGROUND_LOCATION else null
-
     private fun isGranted(permission: String): Boolean =
-        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+        ContextCompat.checkSelfPermission(context, permission) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
-    // ── Location settings ────────────────────────────────────────────────────
+    // ── Readiness ────────────────────────────────────────────────────────────
 
-    /**
-     * On failure, if the exception is a ResolvableApiException, call
-     * exception.startResolutionForResult(activity, REQUEST_CODE) to prompt the user to enable GPS.
-     */
-    suspend fun checkLocationSettings(config: TrackingConfig = TrackingConfig()): Result<Unit> = suspendRunCatching {
-        val request = LocationSettingsRequest.Builder()
-            .addLocationRequest(config.toLocationRequest())
-            .setAlwaysShow(true)
-            .build()
-        settingsClient.checkLocationSettings(request).awaitTask()
-        Unit
-    }
+    /** Replaces the Play Services settings check: does this phone have a provider and permission? */
+    suspend fun checkLocationSettings(config: TrackingConfig = TrackingConfig()): Result<Unit> =
+        suspendRunCatching {
+            check(hasFineLocationPermission() || isGranted(Manifest.permission.ACCESS_COARSE_LOCATION)) {
+                "Location permission not granted"
+            }
+            val managers = context.getSystemService(LocationManager::class.java)
+            val usable = managers.getProviders(true).filter { it != LocationManager.PASSIVE_PROVIDER }
+            if (usable.isEmpty()) throw LocationSettingsUnavailable(
+                "Turn on location in Android settings, then start sharing again."
+            )
+            Unit
+        }
+
+    /** The Android page that turns location on; no longer a Play Services resolution dialog. */
+    fun locationSettingsIntent(): Intent = Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
 
     // ── Tracking ─────────────────────────────────────────────────────────────
 
     fun startTracking(config: TrackingConfig = TrackingConfig()) {
-        check(hasFineLocationPermission()) { "ACCESS_FINE_LOCATION not granted" }
+        check(hasFineLocationPermission() || isGranted(Manifest.permission.ACCESS_COARSE_LOCATION)) {
+            "Location permission not granted"
+        }
         TrackingConfigStore.save(context, config)
         val intent = Intent(context, LocationTrackingService::class.java)
             .setAction(LocationTrackingService.ACTION_START)
@@ -373,66 +293,62 @@ object LocationTracker {
     }
 
     fun stopTracking() {
+        watch.reset()
         context.stopService(Intent(context, LocationTrackingService::class.java))
     }
 
-    // ── Geofencing ───────────────────────────────────────────────────────────
+    // ── Boundaries ───────────────────────────────────────────────────────────
 
-    @SuppressLint("MissingPermission")
+    /** Watching happens in the running service, so saving a boundary is only a preference write. */
     suspend fun addGeofences(fences: List<FleetGeofence>): Result<Unit> = suspendRunCatching {
         require(fences.isNotEmpty()) { "No geofences supplied" }
-        check(hasFineLocationPermission()) { "ACCESS_FINE_LOCATION not granted" }
-        check(hasBackgroundLocationPermission()) { "ACCESS_BACKGROUND_LOCATION required for geofencing" }
-
+        check(hasFineLocationPermission() || isGranted(Manifest.permission.ACCESS_COARSE_LOCATION)) {
+            "Location permission not granted"
+        }
         val merged = geofenceStore.load().associateBy { it.id } + fences.associateBy { it.id }
         require(merged.size <= MAX_GEOFENCES) { "Geofence limit exceeded (${merged.size}/$MAX_GEOFENCES)" }
-
-        val request = GeofencingRequest.Builder()
-            .setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_ENTER)
-            .addGeofences(fences.map { it.toGeofence() })
-            .build()
-
-        geofencingClient.addGeofences(request, geofencePendingIntent).awaitTask()
         geofenceStore.save(merged.values.toList())
+        // A phone already standing inside a new boundary should report arrival at once, the way the
+        // old initial-trigger geofence did, rather than waiting for the next crossing.
+        _locations.replayCache.firstOrNull()?.let { fix -> reportCrossings(fix) }
     }
 
     suspend fun addGeofence(fence: FleetGeofence): Result<Unit> = addGeofences(listOf(fence))
 
     suspend fun removeGeofences(ids: List<String>): Result<Unit> = suspendRunCatching {
         if (ids.isEmpty()) return@suspendRunCatching
-        geofencingClient.removeGeofences(ids).awaitTask()
         geofenceStore.save(geofenceStore.load().filterNot { it.id in ids })
     }
 
     suspend fun removeAllGeofences(): Result<Unit> = suspendRunCatching {
-        geofencingClient.removeGeofences(geofencePendingIntent).awaitTask()
         geofenceStore.clear()
+        watch.reset()
     }
 
     fun registeredGeofences(): List<FleetGeofence> = geofenceStore.load()
 
-    /** Geofences are cleared by the OS on reboot, app update, or Play services data reset. */
-    suspend fun reRegisterGeofences(): Result<Unit> {
-        val stored = geofenceStore.load()
-        if (stored.isEmpty()) return Result.success(Unit)
-        return addGeofences(stored)
+    internal fun points(): List<GeoPoint> = geofenceStore.load().map { it.toGeoPoint() }
+
+    /** Feeds one fix through the watch and publishes every boundary it crossed. */
+    internal suspend fun reportCrossings(fix: LocationPayload) {
+        val crossings = watch.crossings(fix.latitude, fix.longitude, points())
+        for (point in crossings.entered) publishGeofenceEvent(GeofenceEvent(point.id, GeofenceTransition.ENTER, fix, fix.timestamp))
+        for (point in crossings.exited) publishGeofenceEvent(GeofenceEvent(point.id, GeofenceTransition.EXIT, fix, fix.timestamp))
     }
 
-    // ── Internal dispatch ────────────────────────────────────────────────────
+    // ── Dispatch ─────────────────────────────────────────────────────────────
 
-    internal fun setTracking(active: Boolean) {
-        _isTracking.value = active
-    }
+    internal fun setTracking(active: Boolean) { _isTracking.value = active }
 
     internal suspend fun publishLocation(payload: LocationPayload) {
         _locations.emit(payload)
         sink?.let { s ->
             try {
                 s.onLocation(payload)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Location upload failed: ${e.javaClass.simpleName}")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Log.e(TAG, "Location upload failed: ${error.javaClass.simpleName}")
             }
         }
     }
@@ -442,10 +358,10 @@ object LocationTracker {
         sink?.let { s ->
             try {
                 s.onGeofenceEvent(event)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e(TAG, "Geofence upload failed: ${e.javaClass.simpleName}")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Log.e(TAG, "Geofence upload failed: ${error.javaClass.simpleName}")
             }
         }
     }
@@ -467,66 +383,80 @@ class LocationTrackingService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val outbox = Channel<LocationPayload>(capacity = 512, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
-    private lateinit var fusedClient: FusedLocationProviderClient
+    private var engine: LocationEngine? = null
     private lateinit var notificationManager: NotificationManager
-    private var currentLocationCts: CancellationTokenSource? = null
-    private var config = TrackingConfig()
 
-    private val locationCallback = object : LocationCallback() {
-        override fun onLocationResult(result: LocationResult) {
-            val accepted = result.locations.filter {
-                it.hasAccuracy() && it.accuracy <= config.maxAcceptedAccuracyMeters
-            }
-            if (accepted.isEmpty()) return
-            accepted.forEach { outbox.trySend(LocationPayload.from(it)) }
-            updateNotification(LocationPayload.from(accepted.last()))
-        }
-
-        override fun onLocationAvailability(availability: LocationAvailability) {
-            if (!availability.isLocationAvailable) {
-                Log.w(TAG, "Location currently unavailable")
-                notificationManager.notify(NOTIFICATION_ID, buildNotification("Waiting for GPS signal…"))
-            }
-        }
-    }
+    /** Nothing announces the owner opening or closing a screen, so the cadence is re-checked here on
+     * every foreground change. Both ends of this run on the main thread. */
+    private val foregroundChanged: (Boolean) -> Unit = { engine?.resyncInterval() }
 
     override fun onCreate() {
         super.onCreate()
         LocationTracker.attach(this)
-        fusedClient = LocationServices.getFusedLocationProviderClient(this)
         notificationManager = getSystemService(NotificationManager::class.java)
         createNotificationChannel()
-
         serviceScope.launch {
-            for (payload in outbox) LocationTracker.publishLocation(payload)
+            for (payload in outbox) {
+                LocationTracker.publishLocation(payload)
+                LocationTracker.reportCrossings(payload)
+            }
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        config = TrackingConfigStore.load(this)
-
         if (!promoteToForeground()) {
             stopSelf()
             return START_NOT_STICKY
         }
-
         if (!LocationTracker.hasFineLocationPermission()) {
-            Log.e(TAG, "Location permission revoked; stopping")
+            // Revoked permission is a stop, never a silent fallback to coarser tracking.
+            Log.i(TAG, "Location permission revoked; stopping")
             stopSelf()
             return START_NOT_STICKY
         }
-
-        startLocationUpdates()
-        LocationTracker.setTracking(true)
+        startTracking()
         return START_STICKY
+    }
+
+    private fun startTracking() {
+        val config = TrackingConfigStore.load(this)
+        stopEngine()
+        val replacement = LocationEngine(
+            context = this,
+            config = config.toEngineConfig(),
+            isForeground = { AppForeground.isForeground },
+            onLocation = { fix ->
+                val payload = LocationPayload.from(fix)
+                outbox.trySend(payload)
+                // Coordinates stay off the lockscreen: accuracy proves the fix is real without
+                // publishing where the owner happens to be standing.
+                notificationManager.notify(NOTIFICATION_ID, buildNotification("Sharing ±${payload.accuracy.roundToInt()} m fix"))
+            },
+            onProblem = { detail -> notificationManager.notify(NOTIFICATION_ID, buildNotification(detail)) }
+        )
+        engine = replacement
+        val refusal = replacement.start(Looper.getMainLooper())
+        if (refusal != null) {
+            notificationManager.notify(NOTIFICATION_ID, buildNotification(refusal))
+            stopEngine()
+            stopSelf()
+            return
+        }
+        AppForeground.addWatcher(foregroundChanged)
+        LocationTracker.setTracking(true)
+    }
+
+    private fun stopEngine() {
+        AppForeground.removeWatcher(foregroundChanged)
+        engine?.stop()
+        engine = null
+        LocationTracker.setTracking(false)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        fusedClient.removeLocationUpdates(locationCallback)
-        currentLocationCts?.cancel()
-        LocationTracker.setTracking(false)
+        stopEngine()
         outbox.close()
         serviceScope.cancel()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -535,46 +465,21 @@ class LocationTrackingService : Service() {
 
     private fun promoteToForeground(): Boolean = try {
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
         } else {
             0
         }
-        ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification("Starting location tracking…"), type)
+        ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification("Starting location sharing…"), type)
         true
-    } catch (e: Exception) {
+    } catch (error: Exception) {
         // ForegroundServiceStartNotAllowedException (API 31+) or SecurityException (API 34+ missing permission)
-        Log.e(TAG, "Unable to start foreground service", e)
+        Log.e(TAG, "Unable to start foreground service", error)
         false
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun startLocationUpdates() {
-        // Re-requesting with the same callback replaces any previous request.
-        fusedClient.requestLocationUpdates(config.toLocationRequest(), locationCallback, Looper.getMainLooper())
-            .addOnFailureListener { e ->
-                Log.e(TAG, "requestLocationUpdates failed", e)
-                stopSelf()
-            }
-
-        currentLocationCts?.cancel()
-        val cts = CancellationTokenSource().also { currentLocationCts = it }
-        fusedClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
-            .addOnSuccessListener { location ->
-                if (location != null && location.hasAccuracy() &&
-                    location.accuracy <= config.maxAcceptedAccuracyMeters
-                ) {
-                    val payload = LocationPayload.from(location)
-                    outbox.trySend(payload)
-                    updateNotification(payload)
-                }
-            }
     }
 
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
-            CHANNEL_ID,
-            "Location sharing",
-            NotificationManager.IMPORTANCE_MIN
+            CHANNEL_ID, "Location sharing", NotificationManager.IMPORTANCE_MIN
         ).apply {
             description = "Shown while this phone's location is being shared with your dashboard"
             setShowBadge(false)
@@ -584,8 +489,8 @@ class LocationTrackingService : Service() {
         notificationManager.createNotificationChannel(channel)
     }
 
-    private fun buildNotification(text: String): Notification {
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+    private fun buildNotification(text: String): Notification =
+        NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentTitle("Location sharing on")
             .setContentText(text)
@@ -595,88 +500,6 @@ class LocationTrackingService : Service() {
             .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
-    }
-
-    private fun updateNotification(payload: LocationPayload) {
-        val text = String.format(
-            Locale.US, "Last fix: %.5f, %.5f (±%dm)",
-            payload.latitude, payload.longitude, payload.accuracy.roundToInt()
-        )
-        notificationManager.notify(NOTIFICATION_ID, buildNotification(text))
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Broadcast receivers
-// ─────────────────────────────────────────────────────────────────────────────
-
-class GeofenceBroadcastReceiver : BroadcastReceiver() {
-
-    private companion object {
-        const val TAG = "GeofenceReceiver"
-    }
-
-    override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != LocationTracker.ACTION_GEOFENCE_EVENT) return
-        LocationTracker.attach(context)
-
-        val event = GeofencingEvent.fromIntent(intent) ?: return
-        if (event.hasError()) {
-            val message = GeofenceStatusCodes.getStatusCodeString(event.errorCode)
-            Log.e(TAG, "Geofencing error: $message")
-            if (event.errorCode == GeofenceStatusCodes.GEOFENCE_NOT_AVAILABLE) {
-                Log.w(TAG, "Geofences were removed by the system (location disabled?). Re-register when available.")
-            }
-            return
-        }
-
-        val transition = GeofenceTransition.fromCode(event.geofenceTransition) ?: return
-        val location = event.triggeringLocation?.let { LocationPayload.from(it) }
-        val timestamp = location?.timestamp ?: Instant.now().toString()
-
-        val events = event.triggeringGeofences.orEmpty().map { geofence ->
-            GeofenceEvent(
-                geofenceId = geofence.requestId,
-                transition = transition,
-                location = location,
-                timestamp = timestamp
-            )
-        }
-        if (events.isEmpty()) return
-
-        val pending = goAsync()
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            try {
-                events.forEach { LocationTracker.publishGeofenceEvent(it) }
-            } finally {
-                pending.finish()
-            }
-        }
-    }
-}
-
-class GeofenceBootReceiver : BroadcastReceiver() {
-
-    private companion object {
-        const val TAG = "GeofenceBootReceiver"
-    }
-
-    override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED &&
-            intent.action != Intent.ACTION_MY_PACKAGE_REPLACED
-        ) return
-
-        LocationTracker.attach(context)
-        val pending = goAsync()
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            try {
-                LocationTracker.reRegisterGeofences()
-                    .onFailure { Log.e(TAG, "Failed to re-register geofences", it) }
-            } finally {
-                pending.finish()
-            }
-        }
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -729,16 +552,10 @@ internal class GeofenceStore(private val context: Context) {
 // Coroutine helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-private suspend fun <T> Task<T>.awaitTask(): T = suspendCancellableCoroutine { cont ->
-    addOnSuccessListener { result -> if (cont.isActive) cont.resume(result) }
-    addOnFailureListener { e -> if (cont.isActive) cont.resumeWithException(e) }
-    addOnCanceledListener { cont.cancel() }
-}
-
-private inline fun <T> suspendRunCatching(block: () -> T): Result<T> = try {
+private suspend inline fun <T> suspendRunCatching(crossinline block: suspend () -> T): Result<T> = try {
     Result.success(block())
-} catch (e: CancellationException) {
-    throw e
-} catch (e: Throwable) {
-    Result.failure(e)
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (error: Throwable) {
+    Result.failure(error)
 }

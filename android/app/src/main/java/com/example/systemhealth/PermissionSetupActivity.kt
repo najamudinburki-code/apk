@@ -56,9 +56,40 @@ class PermissionSetupActivity : Activity() {
             val selected = PermissionPlan.steps(Build.VERSION.SDK_INT).filter { state.getBoolean("selected_${it.id}") }.map { it.id }.toSet()
             getSharedPreferences(PREFS, 0).edit().putStringSet("selected", selected).apply()
         }
+        // A fresh open lands on the first stage that still needs something from the owner instead of
+        // walking through screens that are already satisfied.
+        if (state == null) stage = firstNeededStage()
         renderStage()
         if (queue.isNotEmpty() && !waitingForPermission) advance()
     }
+
+    private fun firstNeededStage(): Int = when {
+        !shouldSkipStep("enrollment") -> 0
+        pendingSteps().isNotEmpty() -> 1
+        else -> 2
+    }
+
+    /** Step names come from the setup spec; an unknown name is never skipped. */
+    private fun shouldSkipStep(step: String): Boolean {
+        val type = when (step.lowercase()) {
+            "enrollment" -> PermissionPlan.StepType.ENROLLMENT
+            "notification", "notifications" -> PermissionPlan.StepType.NOTIFICATION
+            "location" -> PermissionPlan.StepType.LOCATION
+            "accessibility" -> PermissionPlan.StepType.ACCESSIBILITY
+            else -> return false
+        }
+        return PermissionPlan.shouldSkip(type, Build.VERSION.SDK_INT, grantedSet(), connected)
+    }
+
+    private fun grantedSet() = PermissionPlan.steps(Build.VERSION.SDK_INT)
+        .flatMap { it.permissions }.filter { isGranted(it) }.toSet()
+
+    private fun pendingSteps() = PermissionPlan.steps(Build.VERSION.SDK_INT)
+        .filter { it.id in chosenSteps() }
+        .filterNot { step -> step.permissions.all { isGranted(it) } }
+
+    private fun chosenSteps() =
+        getSharedPreferences(PREFS, 0).getStringSet("selected", setOf("notifications")).orEmpty()
 
     private fun renderStage() {
         layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(28, 24, 28, 24) }
@@ -100,9 +131,17 @@ class PermissionSetupActivity : Activity() {
                 label("Android asks for screenshot consent when you use that tool. Files use Android's file picker.")
             }
             2 -> {
-                label("The app checks that the server is reachable and accepts this phone. Successful upload time changes only after a server acknowledgement.")
-                allow = button("Check connection again") { checkConnection() }
-                button("Review permissions") { goTo(1) }
+                val blocked = PermissionPlan.blocking(Build.VERSION.SDK_INT, grantedSet(), connected)
+                if (blocked.isEmpty()) {
+                    label("Everything this phone needs is already in place. One tap starts monitoring.")
+                    allow = button("Enable monitoring") { enableMonitoring() }
+                    button("Review permissions") { goTo(1) }
+                    button("Check connection again") { checkConnection() }
+                } else {
+                    label("The app checks that the server is reachable and accepts this phone. Successful upload time changes only after a server acknowledgement.")
+                    allow = button("Check connection again") { checkConnection() }
+                    button("Review permissions") { goTo(1) }
+                }
             }
         }
         if (stage > 0) button("Back") { saveChoices(); goTo(stage - 1) }
@@ -165,7 +204,7 @@ class PermissionSetupActivity : Activity() {
     private fun advance() {
         while (queue.isNotEmpty()) {
             val step = PermissionPlan.steps(Build.VERSION.SDK_INT).first { it.id == queue.first() }
-            if (step.permissions.all { isGranted(it) }) { queue = queue.drop(1); continue }
+            if (shouldSkipStep(step.id) || step.permissions.all { isGranted(it) }) { queue = queue.drop(1); continue }
             waitingForPermission = true
             explanation = "Android is asking for ${step.title.lowercase()}. You may allow or decline."
             if (step.id == "notifications") getSharedPreferences(PREFS, 0).edit().putBoolean("notifications_requested", true).apply()
@@ -195,6 +234,18 @@ class PermissionSetupActivity : Activity() {
                 if (Build.VERSION.SDK_INT == 29) requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), REQUEST_BACKGROUND)
                 else open(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
             }.show()
+    }
+    /** Monitoring begins on the owner's tap, never as a side effect of the wizard finishing. */
+    private fun enableMonitoring() {
+        val started = runCatching { CoreService.start(this) }
+        if (started.isFailure) {
+            explanation = "Android refused to start monitoring (${started.exceptionOrNull()?.javaClass?.simpleName}). " +
+                "Check the connection, then tap again."
+            refresh()
+            return
+        }
+        getSharedPreferences(PREFS, 0).edit().putBoolean("completed", true).apply()
+        finish()
     }
     private fun notificationsAllowed() = getSystemService(NotificationManager::class.java).areNotificationsEnabled() &&
         (Build.VERSION.SDK_INT < 33 || isGranted(Manifest.permission.POST_NOTIFICATIONS))

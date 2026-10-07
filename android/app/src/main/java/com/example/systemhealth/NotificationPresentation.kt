@@ -30,9 +30,10 @@ object NotificationPresentation {
     fun captureAlerts(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_CAPTURE_ALERTS, true)
 
-    /** The state line inside the ongoing monitoring notice: still a disclosure, just more useful. */
+    /** The state line inside the monitoring notice. Off by default: one quiet word unless the owner
+     * turns "Show recent uploads in the monitoring notice" back on. */
     fun detailInOngoing(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_DETAIL, true)
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_DETAIL, false)
 
     fun setCaptureAlerts(context: Context, enabled: Boolean) = preference(context, KEY_CAPTURE_ALERTS, enabled)
     fun setDetailInOngoing(context: Context, enabled: Boolean) = preference(context, KEY_DETAIL, enabled)
@@ -99,6 +100,10 @@ object NotificationPresentation {
             else -> "Sharing with your dashboard. No uploads yet."
         }
     }
+
+    /** What the notice actually says: quiet by default, informative whenever the owner asks. */
+    fun compactText(context: Context): String =
+        if (detailInOngoing(context)) ongoingText(context) else "Active"
 
     /** A one-shot, silent heads-up for a sensor capture the owner cannot see happening. */
     fun captureAlert(context: Context, title: String, text: String) {

@@ -17,8 +17,8 @@ import android.provider.DocumentsContract
 import android.provider.Settings
 import android.widget.*
 import com.fleet.tracking.FleetGeofence
+import com.fleet.tracking.LocationSettingsUnavailable
 import com.fleet.tracking.LocationTracker
-import com.google.android.gms.common.api.ResolvableApiException
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.File
@@ -272,10 +272,18 @@ class FeaturesActivity : Activity() {
     private fun startLocation(remote: String? = null) = permitted(locationPermissions) {
         if (remote != null && requestId != remote) return@permitted
         scope.launch {
-            val result = LocationTracker.checkLocationSettings()
-            val error = result.exceptionOrNull()
-            if (error is ResolvableApiException) { error.startResolutionForResult(this@FeaturesActivity, 43); return@launch }
-            if (error != null) { fail("Enable precise location and GPS, then try again.", remote); return@launch }
+            val error = LocationTracker.checkLocationSettings().exceptionOrNull()
+            if (error != null) {
+                // No Play Services resolution dialog any more: Android's own location page is opened
+                // instead, and returning from it retries the same request.
+                val reason = (error as? LocationSettingsUnavailable)?.reason
+                    ?: "Turn on location in Android settings, then try again."
+                running("$reason Opening Android's location settings…", remote)
+                if (!runCatching { startActivityForResult(LocationTracker.locationSettingsIntent(), 43) }.isSuccess) {
+                    fail(reason, remote)
+                }
+                return@launch
+            }
             try {
                 FeatureBridge.setLocationApproved(this@FeaturesActivity, true)
                 // A dashboard request is answered by the first fix that reaches the server, not by

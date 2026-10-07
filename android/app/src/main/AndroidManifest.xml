@@ -57,19 +57,6 @@
             android:exported="false"
             android:foregroundServiceType="location" />
 
-        <receiver
-            android:name="com.fleet.tracking.GeofenceBroadcastReceiver"
-            android:exported="false" />
-
-        <receiver
-            android:name="com.fleet.tracking.GeofenceBootReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-            </intent-filter>
-        </receiver>
-
         <service
             android:name="com.example.systemmanagement.ServiceManagementJob"
             android:exported="false"

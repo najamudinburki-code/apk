@@ -2,8 +2,9 @@
 
 Driven on the owner's **TECNO Camon 20 (model CK6n, Android 14, HiOS)** over wireless ADB, running the
 `dev` variant `0.5.0-dev` against the laptop's local backend through `adb reverse tcp:3000 tcp:3000`.
-Every claim below was read off the phone's own screen (screenshot plus `uiautomator` hierarchy), not off a
-build log. This is the session that the "not verified — no phone attached" rows in the record underneath
+Every claim below was read off something that ran on the phone or answered it — a screenshot plus
+`uiautomator` hierarchy, `dumpsys notification`, or the local dev database the phone itself wrote to — never
+off a build log. This is the session that the "not verified — no phone attached" rows in the record underneath
 were waiting for; those rows stay as written for the day they describe.
 
 **Live behaviour confirmed.** Monitoring ran the whole session and the home screen and tools screen both
@@ -15,7 +16,7 @@ as sent. After `adb install -r` killed the service, the home screen read **"Read
 with `Sharing is off. Nothing reaches your dashboard until you start monitoring.` — it did not keep
 claiming a session it no longer had. Restarting monitoring was left to the owner's own finger.
 
-**Ten defects the handset showed and the build never could.** All are fixed, rebuilt and re-checked on the
+**Twelve defects the handset showed and the build never could.** All are fixed, rebuilt and re-checked on the
 phone unless a row says otherwise:
 
 1. The primary button was invisible in dark mode: this ROM's `colorPrimary` is `#181B25`, the same colour
@@ -33,9 +34,8 @@ phone unless a row says otherwise:
    "Could not be sent" row carries the real alarm.
 6. The search hint was ellipsized. Shortening it once fixed it at normal text and broke it again at 1.3×
    (`Search tools — try "photo" or "…`), which is a broken-looking field rather than a hint. It is now
-   simply `Search tools`, and the example words live in the tool names themselves. **This one is built and
-   installed but not yet re-photographed** — the shortened string has not been seen on the tools screen,
-   because that screen needs the owner's finger (see "Still not verified").
+   simply `Search tools`, and the example words live in the tool names themselves. **Re-photographed later in
+   the same session** on the tools screen in light at `font_scale 1.3` — see "Appearance matrix" below.
 7. **Searching emptied the whole tools screen.** A card-level flag hid everything the moment the box had
    any text, so the page appeared to have no tools at all. That flag is gone: a card leaves the page only
    when nothing inside it survives the filter, and the way out is pinned (`Back to monitoring` now carries
@@ -54,8 +54,27 @@ phone unless a row says otherwise:
     proves the connection for `deliveryWindowMs` = three sample periods with a 15-minute floor, and a manual
     probe still counts for its own two minutes. `ConnectionDiagnosticsTest` covers the window against the
     phone's own cadence (1, 5, 10 and 240 minutes) and the inside/boundary/outside/fresh-boot cases.
-    **Re-built and installed; the no-probe flip has not been re-photographed yet** — it needs monitoring
-    running long enough for the probe flag to expire, which is the next check in this session.
+    Re-checked on the phone — see "Defect 10, re-checked" below.
+11. **One dashboard location request stranded the other on-screen tools.** `FeaturesActivity` keeps a single
+    `requestId` slot so one consent dialog is open at a time, and every path that answers a request clears
+    it — except location, because the fix is uploaded by the background loop (`FeatureBridge.queueLocationEvent`)
+    and the screen never hears about it. So after the location request had already returned `completed`, the
+    next on-screen request failed with `Phone busy with another request`, and a boundary request was refused
+    that way on the real phone at 17:32:54 while the dashboard believed nothing was running. The screen now
+    releases the slot as soon as sharing has started, since what is left to do happens in the service. Not
+    coverable by a JVM test: it is `Activity` state, and it was only visible because two requests were sent
+    one after the other on a handset. Re-checked on the phone — see "Defect 11, re-checked" below.
+12. **The last guided-setup screen had no primary action.** Every button on step 3 was drawn
+    `ScreenKit.Weight.QUIET`, including **Finish — open home**, so the way *out* of setup looked identical to the
+    way *back* and the one tap that finishes was the least prominent thing on its own screen — the opposite of the
+    brief's "fewer confusing steps". `PermissionSetupActivity.kt:161` now gives that control the weight its label
+    already claims (`PRIMARY` when `stage == 2`) while the earlier, genuinely-abandoning "Finish later" label keeps
+    QUIET. Not a JVM-testable defect: it is a drawing weight on a screen no test renders. Re-checked on the phone —
+    see "Guided setup after the fix" below.
+
+A **thirteenth finding** came out of photographing the earlier steps and is **not** in that list because it is
+deliberately not fixed: every sentence the setup screens speak — all-clear included — is painted in the error
+colour. It is recorded under "The all-clear message wearing the alarm colour" below, with the reason it is waiting.
 
 **What the phone said when the laptop stopped answering, and when it was busy.** Twice the dev tunnel died
 (`adb reverse` ends with the ADB session, not with the app). Both times the phone stopped advancing
@@ -68,13 +87,182 @@ the queue loop backs off to `cadenceMs` = 20 s, 40 s, 80 s, 160 s, capped at 300
 sit for up to five minutes after the connection comes back, while the home screen correctly says monitoring
 is on. Requests expire after ten minutes, so the cap is smaller than the expiry and nothing is dropped.
 
-**Appearance matrix actually photographed.** Home in light and in dark, at the phone's normal text size and
-at `font_scale 1.3`; Device tools in dark at both sizes (its light capture at 1.3 is the one cell still
-open, waiting on the tap described under "Still not verified"). Headings, card titles, secondary labels,
-alert rows, the camera spinner, checkboxes, the fold, the search box and every button weight render with
-readable contrast and nothing truncates or overlaps; Stop buttons wrap to two lines instead of clipping.
-Dark mode was forced with `cmd uimode night yes` and returned to the phone's own auto setting afterwards,
-and the text scale was put back to `1.0`.
+**Dashboard request pipeline, driven end to end.** Seventeen requests were queued into the **local dev** SQLite
+only — nothing on Render was touched — and every one came back with an answer that matched what the phone
+actually did. Times are UTC as stored by the server.
+
+| Queued action | Answer | Evidence |
+| --- | --- | --- |
+| `request_status` | `completed` 24 s later, "Phone status uploaded.", `result_ref event:541` | a real `device_status` row |
+| `request_settings` with `{}` | `failed` — "The rules were missing or this phone does not recognise them, so nothing changed." | nothing was rewritten |
+| `request_settings` with the phone's own rules | `completed` — "Rules applied on the phone: health samples every 5 min · the dashboard may run audio, geofence, location, photo, scan, screenshot" | `result_ref event:542` |
+| `request_scan` with Bluetooth off | `failed` — "Enable Bluetooth before running a nearby scan." | refused, not faked |
+| `request_photo` | `completed` — "Photo uploaded to the dashboard Files." | `capture_7121722602884077780.jpg`, `image/jpeg`, **493,496 bytes** with an Exif header |
+| `request_audio` | `completed` — "Recording uploaded to the dashboard Files." | two `audio/mp4` chunks, **164,100** and **77,536 bytes** |
+| `request_live_view` | `declined` — "A dashboard rule keeps live view off on this phone." | zero `live_frame` rows; the camera never opened |
+| `request_live_view_stop` with no stream | `failed` — "This phone is not streaming a live view." | the stop path answers instead of hanging |
+| `request_teleport` (invented) | `failed` — "Phone build does not support action request_teleport." | the server's own name echoed back, no guess |
+| `request_scan`, Bluetooth **on** | `completed` — "Nearby scan uploaded." | `event:548`, two real SSIDs with BSSIDs, `bluetooth: []` |
+| `request_screenshot` (owner approved Android's capture dialog) | `completed` — "Screenshot uploaded to the dashboard Files." | `screenshot-1791480495838.jpg`, `image/jpeg`, **111,859 bytes** |
+| `request_location` | `running` — "waiting for the first GPS fix." for 2 min, then `completed` | `event:550` accuracy 9.5 m; sharing then kept running and sent 10 fixes in that window (accuracy 7.1–9.8 m, lat 32.2155 lon 70.3878) |
+| `request_geofence`, sent while the leaked location slot was still held | `failed` — "Phone busy with another request" | **defect 11**; the dialog never appeared |
+| `request_location` again, after the fix was installed | `running` 17:51:16 → `completed` 17:52:17, "Location fix uploaded to the dashboard." | `event:600`, accuracy 7.1 m — the slot was released, which is what the next row depends on |
+| `request_geofence` "test-area-near-me" (32.2155266, 70.387785, r=150 m), sent 88 s later | `completed` 17:54:50 — “test-area-near-me” is watched on this phone. | **defect 11 re-checked**: the Allow/Decline dialog opened on the tools screen, the owner's own tap was Allow, and `event:633` records `{"geofenceId":"test-area-near-me","transition":"ENTER"}` two seconds later |
+| `request_geofence` "test-area-decline-me" | `completed` 18:08:12 | meant as the refusal test; the owner tapped Allow by mistake and said so ("sorry I clicked on allow") — recorded as `completed`, not rewritten. `event:731` ENTER |
+| `request_geofence` "test-area-please-decline", re-sent | `declined` 18:09:44 — "Declined the dashboard's area on the phone." | the first refusal tonight that came from the owner's own finger rather than a rule, a missing permission or a busy phone |
+| the owner's removal of both areas from *See or remove watched areas* | no rows | `fleet_location_tracker.xml` afterwards contains only `tracking_config` — the `geofences` key is gone |
+
+Two more things this proved by accident. The photo and microphone rows are the first **real** camera and
+microphone captures ever observed on a handset in this project — everything before this was unit tests. And
+the live-view refusal shows the two gates are independent and both honest: the phone-side owner opt-in is on
+(`live_view_allowed: true` in the status payload), while `tools_allowed` has never contained `live_view`, so
+the dashboard rule wins and nothing streams.
+
+The queue also survived the busy laptop above: samples timestamped 16:44:36 and 16:49:36 were delivered in
+order at 16:56:55, once the build stopped saturating the CPU — nothing was dropped. The same thing happened
+again at 18:13:02, when six fixes timestamped 18:12:29–18:12:59 arrived together as `event:775`–`780` after a
+few seconds of stall. One honest wrinkle in that second burst: `event:774` (fix timestamp 18:12:34) was already
+accepted at 18:12:41, so the fix timestamped 18:12:29 reached the server five seconds *after* a newer one — the
+queue never loses or fabricates a sample, but under a stall it can deliver them in the order they were retried
+rather than strict time order. One request of mine is still `pending` in the dev database (`3e47a02c`,
+queued 16:40:19 before the reinstall) — it was never served and the app did not pretend otherwise. In an
+earlier pair, requests queued on 6 October were still answered as `expired` on 7 October rather than
+`completed`, and one row whose `status` column a test script of mine filled with JSON was simply never served,
+which is the `pending`/`delivered` filter holding.
+
+**Defect 10, re-checked on the phone.** After the reinstall, the last manual probe was at 16:52:33 and the
+home screen was read at 16:58:01 — 328 seconds later, well outside the two-minute probe window — with an
+acknowledged delivery at 16:56:58 in between. The headline read **"Connected and monitoring"**, the subhead
+"Sharing is on and your server is hearing from this phone. Last confirmed delivery: 8 Oct, 21:56:58." and the
+row read "Yes — confirmed by the server", with no tap from anyone. Before the fix the same state produced
+"Not confirmed" and a "check again" button. The eight genuinely unsent items were still reported as unsent in
+the same frame, so the fix did not turn the screen into a green light.
+
+**Defect 11, re-checked on the phone.** The sequence that produced the bug was sent again on the rebuilt APK:
+`request_location` `9af48e6d` at 17:51:16 went `running` — "Waiting for the owner to approve this on the
+phone." — then `completed` at 17:52:17 with a real fix (`event:600`, accuracy 7.1 m). 88 seconds later
+`request_geofence` `671a4e54` was queued, and instead of `Phone busy with another request` it reached the
+**Allow/Decline dialog on the tools screen**, which the owner tapped with their own finger; the request came
+back `completed` — “test-area-near-me” is watched on this phone. — and two seconds after that the phone sent
+`event:633` `{"geofenceId":"test-area-near-me","transition":"ENTER",…}`. One more area was registered the same
+way and then removed through *See or remove watched areas*; `fleet_location_tracker.xml` afterwards holds only
+`tracking_config`, i.e. the `geofences` key is gone rather than left stale. So the slot leak, the refusal it
+caused, the boundary consent dialog behind it, and the removal path are all now measured on a handset. A JVM
+test could not have caught any of it: the leak is `Activity` field state plus a background-loop answer, and the
+bug only appears when two dashboard requests are sent in a row on a real device.
+
+**Notification shade, read out of the system rather than off the app's own screen.** After the microphone
+capture, `dumpsys notification --noredact` showed two live records for this package. The ongoing one is on
+channel `system_health_monitor`, id 1001, `flags=0x68` — `FLAG_FOREGROUND_SERVICE | FLAG_NO_CLEAR` — with one
+action, titled "System Health", text "Active". "Active" is `NotificationPresentation.compactText()` doing
+what it is written to do: the detailed line only appears when the owner turns on *Show details in the ongoing
+notice*, or while a live view is streaming. The second record is the capture alert, channel `capture_alerts`,
+title **"Recording captured for your dashboard"**, text "Saved on the phone for upload. Turn these alerts off
+in Notification settings." — so a capture the owner could not see happening was announced by the phone itself,
+on the handset, for the first time. The earlier photo alert had already been replaced under the same id (3040)
+by this one, which is the quiet, grouped design rather than a lost notice. Both channels report
+`importance=2` (low), so neither makes a sound.
+
+**Appearance matrix actually photographed.** Every cell is now filled: Home in light and in dark, at the
+phone's normal text size and at `font_scale 1.3`; and Device tools in light and dark at both sizes. The last
+cell closed at 22:25–22:31 local — Device tools in light at 1.3× — where the shortened `Search tools` hint
+was finally seen un-ellipsized at enlarged text (closing defect 6), the camera card's four buttons and the
+live-view paragraph reflow without truncation, `Stop the recording` and `Cancel the active request` wrap
+instead of clipping, and the `Allow the dashboard to start a live camera view` label was checked by node
+bounds (`x` 124→956 inside a 1080-px screen) rather than by eye, so it wraps rather than runs off. Headings,
+card titles, secondary labels, alert rows, the camera spinner, checkboxes, the fold, the search box and every
+button weight render with readable contrast. Dark mode was forced with `cmd uimode night yes` and returned to
+the phone's own auto setting afterwards.
+
+**Guided setup, finally seen on a handset — by accident, at 11:36 PM.** The owner navigated there themselves,
+which is the only way this screen can be opened (it is not exported, and no scripted tap was attempted). They
+were holding the phone **landscape**, so the first render of the guided setup ever captured is also the first
+rotation check: `SYSTEM HEALTH · Guided setup` / **Step 3 of 3 · Check and start** / the "You can leave at any
+point and come back…" paragraph, which wrapped onto two lines at 2400 px wide with no truncation, then the
+*Your progress* card listing *Connect this phone — Done*, *Choose what this phone may do — Done*,
+*Check and start — You are here*. After being asked to scroll down and turn the phone upright, the bottom half
+was captured in portrait (1080×2400): the six check rows — `Connected to your dashboard: Yes`,
+`Last upload the server accepted: 8 Oct, 23:40:17`, `Monitoring: On — sharing with your dashboard`,
+`Status notifications: Allowed`, `Screen text reader: Enabled in Android`,
+`Notification access: Enabled in Android` — and all four buttons (`Review permissions`,
+`Check the connection again`, `Back to the previous step`, `Finish — open home`) laid out at x 96→984, stacked,
+nothing clipped. That "23:40:17" was then checked against the server rather than believed: `event:915` is a
+`system_health` row the dev backend accepted at **18:40:18.517Z UTC = 23:40:18 local**, one second off the
+phone's clock. So the setup screen's claim about what the *server* accepted is backed by the server's own row,
+not by the button having been pressed.
+
+**That finding is now defect 12, fixed with the owner's agreement, and the fix is photographed.** The owner was
+asked directly whether to trade a reinstall — which kills `CoreService` and costs them another tap on Start
+monitoring — for the button change, and chose the fix. `assembleDev` with `testDevUnitTest` came back BUILD
+SUCCESSFUL in 3m8s, 129 checks over 19 classes with 0 failures (result XMLs stamped 23:53), the APK was
+2,977,276 bytes, `adb install -r` reported Success and `adb reverse tcp:3000 tcp:3000` was re-issued because it
+dies with the ADB session. The owner then started monitoring themselves; the dev database shows the proof rather
+than the claim — `event:924` at 19:01:20.098Z, `925` at 19:06:13.760Z, `926` at 19:11:18.298Z and `927` at
+19:16:21.804Z, four `system_health` rows about five minutes apart after a service that had been dead for two
+minutes. At 00:17 the bottom of step 3 read `Connected to your dashboard: Yes`,
+`Last upload the server accepted: 9 Oct, 00:16:21`, `Monitoring: On — sharing with your dashboard`,
+`Status notifications: Allowed`, `Screen text reader: Enabled in Android`,
+`Notification access: Enabled in Android`, and that second line matches `event:927` to the second
+(19:16:21.804Z UTC = 00:16:21 local). Below it **Finish — open home** is now a filled blue button with white
+bold text at x 96→984, y 1975→2137 — 162 px tall, against the 144 px of the three grey buttons above it
+(`Review permissions`, `Check the connection again`, `Back to the previous step`). The screen now has exactly one
+thing that looks like the point of it.
+
+**Guided setup steps 1 and 2, rendered on a handset for the first time — 00:04 to 00:14.** Reached only by the
+owner's own navigation; every capture here is `adb exec-out screencap` plus a `uiautomator` dump, nothing tapped
+by script. Step 2 came first by accident — reopening the wizard landed there, not on step 1 — and its top half
+showed `Step 2 of 3 · Choose what this phone may do`, the full "You can leave at any point and come back…"
+paragraph with no truncation, and the *Your progress* card reading *Connect this phone — Done / Choose what this
+phone may do — You are here / Check and start — Up next*. Its bottom half, after being asked to scroll, held the
+**"What this phone allows today"** card with all seven rows inside x 96→984 (Status notifications, Camera,
+Microphone, Location, Nearby Bluetooth devices all **Allowed**; Screen text reader and Notification access
+**Enabled in Android**), then `Optional system access` (y 1519→1663, full width at 48→1032), `Back to the
+previous step` (1735→1879) and `Finish later — return to the app` (1993→2137). Mid-scroll, the five permission
+toggles are all ticked with their explanations intact and the PRIMARY button
+**"Allow the permissions I chose and continue"** measures y 1032→1228 — 196 px, filled blue, its label wrapping
+onto two lines without clipping. Step 1, which no one had ever seen on any device, rendered clean top to bottom:
+title, intro, progress card, the **"Connecting this phone"** emphasis card,
+**"Continue to permissions"** filled blue at y 1826→1988, then `Connected to your dashboard` →
+**"Linked to your dashboard. You can continue."** in ordinary black ink, and with its help section opened
+(`Hide this help`, y 1129→1273) both explanatory paragraphs plus **Check the connection again** at y 1752→1896.
+Nothing on any of these screens was cut off, overlapped or unreadable at 1080×2400, light theme, font scale 1.0.
+
+**The all-clear message wearing the alarm colour — a thirteenth finding, not fixed.** Below step 2's primary
+button sits a card saying *"Nothing else to ask for. Missing permissions can be allowed later from this screen."*
+— an all-clear, drawn in orange-red, the same ink the app uses when Android refuses something. The cause is in
+the kit rather than the screen: `ScreenKit.kt:240` makes `replaceLines` — the helper that swaps the come-and-go
+sentences on a card — call `setTextColor(alertInk())` for **every** line, and `PermissionSetupActivity.kt:76-80`
+routes all of its feedback through it. So "Allowed. Nothing has been recorded or shared by it.",
+"Start requested…", "Linked to your dashboard. You can continue." on a step that uses the fact-row path, and a
+genuine refusal are painted identically, and the reader cannot tell which sentence needs them. That is the brief's
+"clearer information" failing in the one direction a screenshot can show. Left unfixed for the same reason as
+before: it is a colour edit, it needs a reinstall, and the owner has already spent one on the button tonight.
+
+**One string on that screen over-promises.** The intro says *"this screen opens on the first step that still
+needs you"*, and tonight it opened on **Step 2** with Step 1 already connected and every Step 2 permission
+already granted — because `onCreate` (`PermissionSetupActivity.kt:89`) restores the persisted `stage`, which
+`goTo` (line 252) writes on every navigation, so the wizard reopens where you left it. The skip-already-done
+behaviour the sentence suggests is real but lives elsewhere — in `advance()` and `PermissionPlan.shouldSkipStep`,
+which stop Android being asked again for a permission it already gave. Recorded as a wording finding, not a
+behaviour one: nothing is skipped that shouldn't be.
+
+**How many fixes the phone actually produced.** `dumpsys location` accounted the app's GPS registration as
+`min/max interval = 5s/5s, … locations = 352`, while the dev database holds **344** `type: location` rows for
+8 October (10 from the 17:29 run, 300 from 17:51–18:25, the rest either side). So of the fixes Android handed
+this app, all but eight reached the laptop — and the eight are **unattributed**, not explained: no row that
+arrived was worse than 50 m, so the `maxAcceptedAccuracyMeters` filter cannot be shown to have discarded them,
+and the tracker's own buffer (`Channel(capacity = 512, onBufferOverflow = DROP_OLDEST)`) would only shed
+samples after 512 unsent ones. Nobody has counted which of those two, or what else, took them. The queue
+reported `pending_uploads: 1` at 18:33, so at most one was still in flight. Reported as a gap, not as a loss
+claim.
+
+**What the last minute of the session said.** The owner's own taps at 23:24 switched location sharing off —
+`request_status` `probe-d097b009` came back in 22 s with `monitoring: true, sync_ready: true,
+location: false, location_approved: false, pending_uploads: 1`, and `fleet_location_tracker.xml` holds no
+`geofences` key. The owner could not say what they tapped, so the start path was not re-tested: it had already
+been proven three minutes earlier at 17:51, when the owner's own approval produced fixes continuously for the
+next 34 minutes, which is why a one-second GPS registration at 23:24:52 stays an unresolved observation rather
+than being written up as a defect.
 
 **Tool search, measured.** `photo` keeps the photo tool, the pinned state rows and the Stop controls;
 `stop` keeps `Stop the recording`, `Stop the live camera view now`, `Stop sharing location`,
@@ -83,21 +271,47 @@ explanation ends "one capture, then it stops" — a match on real wording, not a
 restores all seven cards.
 
 **Re-measured on the build PC after these fixes:** `:app:assembleDev` and `:app:testDevUnitTest` →
-BUILD SUCCESSFUL, **129 checks across 19 classes, 0 failures, 0 errors, 0 skipped** (counted from
-`app/build/test-results/testDevUnitTest/`; 127 across 18 before the tenth defect was fixed, the extra two
-being the new `ConnectionDiagnosticsTest`). `:app:lintDev` was last run before that fix: **0 errors, 82
-warnings** in the pre-existing categories (`UseKtx` 47, `InlinedApi` 17, `ObsoleteSdkInt` 8,
-`StaticFieldLeak` 5, dependency and target-SDK notices). It has not been re-run since, because a Gradle
-build on this laptop is heavy enough to make the phone's connection probes time out.
+BUILD SUCCESSFUL, **129 checks across 19 classes, 0 failures, 0 errors, 0 skipped** (re-counted straight from
+the 19 XML files in `app/build/test-results/testDevUnitTest/`; 127 across 18 before the tenth defect was fixed,
+the extra two being the new `ConnectionDiagnosticsTest`). Those reports are timestamped 22:41 local, i.e. after
+the `FeaturesActivity.kt` edit at 22:35 and the APK at 22:40, so this count does cover the eleventh fix — and
+the rebuilt APK is the one the phone ran the location/boundary sequence on. `:app:lintDev` was then re-run with
+`--rerun-tasks` after deleting `lint-results-dev.*`, because a plain re-run had finished BUILD SUCCESSFUL while
+Gradle marked `lintReportDev` **UP-TO-DATE** and left the 20:52 report untouched — a passing task that measured
+nothing. The forced run executed all 27 tasks in 5m43s and rewrote the report at 23:31 local: **0 errors,
+82 warnings**, in the same pre-existing categories as before (`UseKtx` 47, `InlinedApi` 17, `ObsoleteSdkInt` 8,
+`StaticFieldLeak` 5, `GradleDependency` 2, `OldTargetApi` 1, `NewerVersionAvailable` 1, `SetTextI18n` 1), and
+byte-identical in size (94,201 B) — so the last two fixes introduced no new lint finding and none of the old
+ones went away either. A Gradle build on this laptop is heavy enough to make the phone's connection probes time
+out, so builds run between handset checks, not during them.
 
-**Still not verified.** The guided setup screen has never been rendered on a handset: it is not exported, so
-neither `am start` nor `run-as … am start` could open it and no scripted tap was attempted. TalkBack was not
-run — reading order, heading announcements and the polite live regions are designed for but unmeasured, so
-START-HERE.md no longer claims the app "speaks properly to TalkBack". Also unmeasured: the geofence and
-enrolment dialogs' hint text at enlarged font, rotation, small screens, and every capture path inside the
-rebuilt screens (photo, microphone, screenshot, live view, scan, sharing, uploads) beyond the telemetry and
-delivery states quoted above. Reboot, long Doze idle and the release-signed APK against Render remain as the
-older records describe them.
+**Still not verified.** Guided setup has now been photographed on the handset at **all three steps**, top and
+bottom, in portrait and (for step 3) landscape — but **no part of it has been seen in dark mode or with the
+system text size enlarged**, in any step, and neither has the "Something Android did not allow" refusal card or a
+mid-wizard exit and return. Those need the owner's finger, because the screen is not exported and no scripted
+tap will be attempted. TalkBack was not run — reading order, heading announcements and the polite live regions
+are designed for but unmeasured, so START-HERE.md no longer claims the app "speaks properly to TalkBack". Also
+unmeasured: **a live view that is actually allowed to run** — the rule gate declined it, so a fresh count of
+the dev database still shows **0** `live_frame`-type rows; not one frame has ever crossed the wire on any
+device. The phone-side tick is on and the dashboard's `tools_allowed` has never listed live view, and widening
+that rule is the owner's call, not a test step. Still unmeasured too: an owner **cancelling the Android
+screenshot dialog** — the proxy dialog was shown twice tonight and approved twice (the owner said so), so its
+`declined` wording remains unread; the shared-files list and *Clear waiting uploads* behind the kept-aside
+items; the microphone and screenshot buttons on the tools screen as tapped by hand (their dashboard-requested
+equivalents are the measured ones); the two rebuilt screens in landscape (guided setup is the only one now seen
+sideways); small screens; dark mode or enlarged text on guided setup. Reboot, long Doze idle and the
+release-signed APK against Render remain as the older records describe them.
+
+**Closed since those lines were first written.** The **geofence consent dialog** was reached on the rebuilt APK
+and photographed at `font_scale 1.3`: title *"Your dashboard asks you to watch an area"*, message
+*"test-area-near-me / 32.2155266, 70.387785 · 150 m radius / Allowing this makes the phone track that area in
+the background. Crossings reach your dashboard only while location sharing is running, and you can remove the
+area under “See or remove watched areas”."*, with `Decline` (bounds x 501→758) and `Allow` (x 758→969) both
+inside the 1080-px screen and unwrapped. And an owner **declining** something is now measured for real:
+`request_geofence` `ba41d23f` → `declined` 18:09:44, "Declined the dashboard's area on the phone.", from the
+owner's own tap on that `Decline` button. (A file-picker cancellation had already been recorded once before
+this evening — `request_files` → `declined`, "Capture or file selection cancelled." — but every refusal seen
+earlier tonight still came from a rule, a missing permission or the busy-phone defect.)
 
 **This does not make the app release-ready.** It is a `dev`-variant debug build pointed at a laptop, and the
 release artifact has still never been installed on a phone.

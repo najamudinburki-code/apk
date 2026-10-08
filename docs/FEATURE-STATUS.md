@@ -28,7 +28,12 @@ All source files compile. Android controls are connected to the retained utiliti
 
 The three phone screens were rebuilt for readability on **8 October 2026** (`docs/UI-BEFORE-AFTER.md` maps every old control to its new place). It changed presentation only: the same enrollment paths, consent dialogs, notices, Stop controls, tool actions, request states, dashboard-rule semantics, single upload transport and saved settings as the rows above describe. No backend or dashboard file was touched, so every "Active path" cell above still names the code that runs.
 
-The live camera view row above is **source only on 2026-10-08**: it compiles, passes its unit and backend checks, and has never run on a handset. The delivered 0.5.0 test APK does not contain it, so the dashboard accepts the request and the installed phone answers `failed — Phone build does not support action request_live_view.` until a rebuilt APK is installed.
+The live camera view row above is in the handset build now, but **it has still never streamed a frame**: driven
+on the Camon 20 on 2026-10-08 evening, `request_live_view` was answered `declined — "A dashboard rule keeps
+live view off on this phone."` and the dev database holds **0** `live_frame` rows, because the owner's
+phone-side tick is on while `tools_allowed` has never included live view. Both gates therefore work and are
+independent; what remains unmeasured is a session that actually opens the lens, which needs the owner to widen
+that rule — that choice is theirs, not a test step.
 
 Every remote tool row above is also subject to the dashboard rule set: a tool the owner switched off on the dashboard is answered `declined` on the phone with the rule named, so the ledger never shows a delivered request that quietly did nothing. Rules never add a permission or start monitoring.
 

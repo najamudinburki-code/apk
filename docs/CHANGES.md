@@ -277,7 +277,7 @@ before/after map; nothing below changed a route, a request action, a preference 
 ## Interface rebuild on the handset — 8 October 2026, evening
 
 The same build was then driven on the owner's TECNO Camon 20 (Android 14) over wireless ADB against the
-local backend, and that is what the paragraph above could not substitute for. Nine defects showed up on the
+local backend, and that is what the paragraph above could not substitute for. Twelve defects showed up on the
 handset and none of them were visible from a compiler, a test runner or a lint report:
 
 - **The theme lied about its own colours.** This ROM's dark `colorPrimary` equals its window background, so
@@ -303,13 +303,36 @@ handset and none of them were visible from a compiler, a test runner or a lint r
   Not confirmed` with a "check again" button, which is a false alarm on the one screen whose job is to be
   trusted. A delivery now proves the connection for three sample periods with a 15-minute floor
   (`deliveryWindowMs`), covered by the new `ConnectionDiagnosticsTest`.
+- **One dashboard location request stranded the other on-screen tools.** `FeaturesActivity` holds a single
+  `requestId` so only one consent dialog is open at a time, and every path that answers a request clears it —
+  except location, because the fix is uploaded later by the background loop (`FeatureBridge.queueLocationEvent`)
+  and the screen never hears about it. The next on-screen request then failed with `Phone busy with another
+  request`, and a boundary request was refused that way at 17:32:54 while the dashboard believed nothing was
+  running. The screen now releases the slot once sharing has started, since what remains happens in the
+  service. Not testable on the JVM: it is `Activity` state, visible only when two requests are sent in a row.
+- **The last guided-setup screen had no primary action.** Every button on step 3 was drawn
+  `ScreenKit.Weight.QUIET`, including **Finish — open home**, so the way out of setup looked identical to the way
+  back and the one tap that finishes was the least prominent thing on its own screen. `PermissionSetupActivity`
+  now gives that control `PRIMARY` weight when it is the finish step, while the earlier "Finish later" label —
+  which genuinely does abandon setup — stays QUIET. Re-photographed at 00:17 on 9 Oct: filled blue, white bold
+  text, 162 px tall against the 144 px of the three grey buttons above it.
+- **The alarm colour is on every sentence the setup screens speak.** Step 2's all-clear — *"Nothing else to ask
+  for. Missing permissions can be allowed later from this screen."* — renders in the same orange-red as a refusal,
+  because `ScreenKit.replaceLines` sets `alertInk()` unconditionally for every generated line. This is the same
+  failure mode already fixed once on the home queue message, arriving through a different helper; it is recorded
+  and left unfixed, because a colour edit costs another reinstall and another tap on Start monitoring.
+
+The guided-setup wizard was then walked end to end by the owner's own navigation past midnight — steps 1, 2 and 3,
+each photographed top and bottom, which is the first time any of it had been rendered on a handset. Nothing was cut
+off or unreadable at 1080×2400 in light theme at font scale 1.0; dark mode and enlarged text on those three screens
+are still unseen.
 
 What the phone confirmed rather than revealed: deliveries advancing on their own with server-acknowledged
 timestamps, the eight genuinely unsent items still reported as unsent, and — after the reinstall killed the
 service — a home screen that said **Ready — monitoring stopped** instead of claiming a session it no longer
-had. The home screen was photographed in light and dark at normal and 1.3× text, and Device tools in dark at
-both sizes — its light capture at enlarged text, and every guided-setup screen, still await the owner's
-finger. Re-measured after the
+had. The home screen and Device tools were both photographed in light and dark, at normal and 1.3× text, which
+closes every cell of the appearance matrix except guided setup; every guided-setup screen still awaits the
+owner's finger. Re-measured after the
 fixes: `assembleDev` and `testDevUnitTest` → 129 checks across 19 classes, 0 failures, 0 errors; `lintDev`
 was last run before the tenth fix (0 errors, 82 warnings) and has not been re-run since, because a Gradle
 build on this laptop is heavy enough to make the phone's probes time out. **Guided setup is still unseen on a handset** (it

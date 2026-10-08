@@ -158,8 +158,11 @@ class PermissionSetupActivity : Activity() {
         if (stage > 0) screen.card().button("Back to the previous step", ScreenKit.Weight.QUIET) {
             saveChoices(); goTo(stage - 1)
         }
+        // The last step's way out is the one action on that screen, so it carries the filled weight the
+        // home screen's primary button does. On earlier steps the same control only abandons setup, which
+        // must not look like the main thing to press.
         screen.card().button(if (stage == 2) "Finish — open home" else "Finish later — return to the app",
-            ScreenKit.Weight.QUIET) {
+            if (stage == 2) ScreenKit.Weight.PRIMARY else ScreenKit.Weight.QUIET) {
             saveChoices()
             if (stage == 2) markComplete()
             finish()

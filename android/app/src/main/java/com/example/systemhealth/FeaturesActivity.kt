@@ -381,6 +381,11 @@ class FeaturesActivity : Activity() {
                 // starting the tracker, so an indoor phone with no fix never looks like a delivery.
                 FeatureBridge.awaitLocationResult(remote)
                 LocationTracker.startTracking()
+                // The fix is answered by the background loop, not by this screen, so the screen must let
+                // go of the slot. Holding it made every later on-screen request fail as busy: one
+                // dashboard location request stranded the screenshot and boundary tools until the app was
+                // reopened, which is what a handset showed on 2026-10-08.
+                if (requestId == remote) requestId = null
                 running("Location sharing started; waiting for the first GPS fix.", remote)
                 message("Location sharing started; the dashboard waits for an accurate GPS fix.")
             } catch (e: CancellationException) { throw e }

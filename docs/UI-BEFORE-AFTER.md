@@ -119,16 +119,24 @@ emptied the whole page. Confirmed by photograph:
 
 ## Not verified
 
-- **Guided setup has still never been rendered on a handset.** It is not exported, so it could not be opened
-  from a computer and no scripted tap was attempted — that screen needs the owner's own finger. That also
-  leaves the refusal card unproven as drawn, and setup resuming from a mid-wizard exit and after rotation.
+- **All three guided-setup steps have now been rendered on a handset.** Step 3 first, at 23:36 on 8 October, top
+  and bottom, portrait and landscape; steps 1 and 2 followed between 00:04 and 00:17 on 9 October, each top and
+  bottom, after a rebuild that gave the last step a filled primary button. The owner walked every one of those
+  screens themselves, since the activity is not exported and no scripted tap was attempted. What that closes is
+  the layout question at 1080×2400, light theme, font scale 1.0 — nothing clipped, every button legible, the
+  finish button now visibly the point of its screen. What it leaves open: **dark mode and enlarged text on all
+  three steps**, the refusal card, and a deliberate "Finish later" exit and return.
 - **TalkBack was not run.** Reading order, heading announcements, polite live-region updates and the spoken
   labels are designed for and are not measured. Nothing in this document claims otherwise.
-- The geofence and enrolment dialogs' hint text at enlarged font, small screens, rotation, and the fold
-  animations.
-- Camera, microphone, screenshot, live view, location, geofence, scan, sharing and upload behavior inside
-  the rebuilt screens: unchanged code paths, and beyond the telemetry and delivery states above still
-  unproven on hardware in this interface.
+- The enrolment dialog's hint text at enlarged font, small screens, rotation, and the fold animations. The
+  **geofence** consent dialog has since been seen at `font_scale 1.3` on the handset — title, area name,
+  coordinates, radius, the background-tracking explanation and both buttons all inside the screen.
+- Sharing and upload behavior *inside these rebuilt screens* is now measured on the Camon 20 (see
+  `docs/VALIDATION.md`, "handset session, 8 October 2026 evening"): camera, microphone, screenshot, location,
+  watched-area add/decline/remove and a Bluetooth-on scan all answered from the tools screen with real payloads
+  behind them. Still unproven in this interface: a live view that the dashboard rule allows, the *Clear waiting
+  uploads* action, and any of it under TalkBack. The guided-setup flow itself was walked end to end at 00:04–00:17
+  on 9 October, forward and back between all three steps.
 
 This is a `dev`-variant debug build pointed at a local server. It is not a signed release artifact and must
 not be described as release-ready: the release APK has still never been installed on a phone.

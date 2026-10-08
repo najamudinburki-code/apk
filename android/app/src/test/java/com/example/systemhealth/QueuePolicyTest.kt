@@ -46,6 +46,16 @@ class QueuePolicyTest {
     }
 
     @Test
+    fun `a full queue makes room for a later frame, never for a capture the owner asked for`() {
+        assertTrue(QueuePolicy.isSupersededFile("live_frame"))
+        // A one-off photo, screenshot or chosen document cannot be remade, so it must not be dropped
+        // to clear the way for frames the same session is still producing.
+        for (kind in listOf("photo", "screenshot", "audio", "document")) {
+            assertFalse("a $kind cannot be remade by the next frame", QueuePolicy.isSupersededFile(kind))
+        }
+    }
+
+    @Test
     fun `a full queue still leaves room for one batch of deliveries`() {
         assertTrue(QueuePolicy.FLUSH_BATCH in 1..QueuePolicy.OUTBOX_LIMIT)
     }

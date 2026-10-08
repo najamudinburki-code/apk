@@ -6,8 +6,10 @@ package com.example.systemhealth
 internal object DeviceCommandRouter {
     enum class Mode { SILENT, CAPTURE, USER, UNKNOWN }
 
-    private val silent = setOf("request_status", "request_scan", "request_settings")
-    private val capture = setOf("request_photo", "request_audio")
+    // Stopping a live view is silent on purpose: a command that ends the camera must never be held
+    // in the server's queue behind the very capture that is using it.
+    private val silent = setOf("request_status", "request_scan", "request_settings", "request_live_view_stop")
+    private val capture = setOf("request_photo", "request_audio", "request_live_view")
     private val user = setOf("request_screenshot", "request_location", "request_geofence")
 
     val actions: Set<String> get() = silent + capture + user

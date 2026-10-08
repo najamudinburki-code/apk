@@ -6,7 +6,8 @@ class DeviceCommandRouterTest {
     // Mirrors ACTIONS in backend/features.cjs; a new server action must be routed here too.
     private val serverActions = setOf(
         "request_status", "request_screenshot", "request_photo", "request_audio", "request_location",
-        "request_scan", "request_geofence", "request_settings"
+        "request_scan", "request_geofence", "request_settings",
+        "request_live_view", "request_live_view_stop"
     )
 
     @Test fun everyServerActionHasARoute() {
@@ -29,6 +30,15 @@ class DeviceCommandRouterTest {
         listOf("request_photo", "request_audio").forEach {
             assertEquals(DeviceCommandRouter.Mode.CAPTURE, DeviceCommandRouter.route(it))
         }
+    }
+
+    @Test fun aLiveViewUsesTheCameraWithoutOpeningTheApp() {
+        assertEquals(DeviceCommandRouter.Mode.CAPTURE, DeviceCommandRouter.route("request_live_view"))
+    }
+
+    @Test fun stoppingACameraIsNeverQueuedBehindTheCamera() {
+        // The command that frees the lens must answer even while a capture is using it.
+        assertEquals(DeviceCommandRouter.Mode.SILENT, DeviceCommandRouter.route("request_live_view_stop"))
     }
 
     @Test fun toolsThatNeedAndroidConsentStillNeedAVisibleScreen() {

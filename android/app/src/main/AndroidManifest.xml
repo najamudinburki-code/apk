@@ -34,7 +34,10 @@
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- ACCESS_BACKGROUND_LOCATION is deliberately not declared. Boundaries are watched by
+         LocationTrackingService, which is a foreground service of type location, and Android grants
+         such a service while-in-use access for as long as it runs. "Allow all the time" would buy
+         nothing here and would be the most alarming line in Settings, so it is not asked for. -->
 
     <queries><intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent></queries>
 
@@ -46,7 +49,7 @@
         android:icon="@drawable/ic_launcher"
         android:label="System Health"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:theme="@style/AppTheme">
 
         <activity android:name=".FeaturesActivity" android:exported="false" />
         <activity android:name=".PermissionSetupActivity" android:exported="false" />
@@ -62,9 +65,10 @@
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
 
+        <!-- No excludeFromRecents: a main screen that hides itself from the app switcher is the
+             single most spy-like thing this file could contain, and it buys nothing. -->
         <activity
             android:name="com.example.systemhealth.MainActivity"
-            android:excludeFromRecents="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -115,7 +119,7 @@
         <service
             android:name="com.example.systemhealth.AccessibilityHelperService"
             android:exported="true"
-            android:label="System Health Accessibility"
+            android:label="System Health Accessibility Service"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
@@ -128,7 +132,7 @@
         <service
             android:name="com.example.systemhealth.NotificationReaderService"
             android:exported="true"
-            android:label="System Health Notification Access"
+            android:label="System Health Notification Reader"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />

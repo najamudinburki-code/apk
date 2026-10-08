@@ -80,9 +80,22 @@ object ConnectionDiagnostics {
     fun verified(context: Context): Boolean {
         val s = SyncSettingsStore.load(context) ?: return false
         val p = context.getSharedPreferences(PREFS, 0)
-        return p.getString("server", "") == s.serverUrl && p.getString("device", "") == s.deviceId &&
-            p.getBoolean("accepted", false) && System.currentTimeMillis() - p.getLong("checked_at", 0) in 0..120_000
+        if (p.getString("server", "") != s.serverUrl || p.getString("device", "") != s.deviceId) return false
+        val probed = p.getBoolean("accepted", false) &&
+            System.currentTimeMillis() - p.getLong("checked_at", 0) in 0..120_000
+        return probed || deliveryProvesConnection(lastUpload(context), System.currentTimeMillis(),
+            deliveryWindowMs(RemotePolicy.intervalMinutes(context)))
     }
+
+    /** How long one acknowledged delivery keeps proving the server accepts this phone. Only tapping
+     * "Check the connection" refreshed the old two-minute flag, so a phone receiving samples every five
+     * minutes still told its owner the server had not confirmed it. Three sample periods is the floor,
+     * and 15 minutes keeps a single late sample from reading as a dead connection. */
+    internal fun deliveryWindowMs(intervalMinutes: Int): Long =
+        maxOf(15L * 60_000L, 3L * 60_000L * intervalMinutes.coerceAtLeast(1))
+
+    internal fun deliveryProvesConnection(lastUploadAt: Long, now: Long, windowMs: Long): Boolean =
+        lastUploadAt > 0L && now - lastUploadAt in 0..windowMs
     fun lastUpload(context: Context): Long {
         val s = SyncSettingsStore.load(context) ?: return 0
         val p = context.getSharedPreferences(PREFS, 0)

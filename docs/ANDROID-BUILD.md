@@ -38,36 +38,49 @@ adb shell am start -n com.example.systemhealth.dev/com.example.systemhealth.Main
 
 ## Signing a release
 
+The short answer is `./buildRelease.sh` at the repository root: it creates the key if none exists,
+builds, verifies the signature, checks `mapping.txt`, and copies the APK and its map into `dist/`. The
+rest of this section is for when you want to do it by hand, or want to know what the script owes you.
+
 An unsigned release APK installs nowhere, so `assembleRelease` without a key produces
 `app-release-unsigned.apk` on purpose. Keep the key out of the repository: `*.jks`, `*.keystore` and
-`keystore.properties` are already ignored.
+`keystore.properties` are already ignored, and `pre-commit.sh` refuses them if `git add -f` is used
+(see `CONTRIBUTING.md`).
 
 Create a key once and store it somewhere safe — losing it means every phone must be reinstalled, because
 Android refuses an update signed by a different key.
 
 ```bash
-keytool -genkeypair -v -keystore systemhealth-release.jks -alias systemhealth \
-  -keyalg RSA -keysize 2048 -validity 10000
+cd android            # the store file below is written relative to the app module, so put the key here
+keytool -genkeypair -v -keystore release.keystore -storetype PKCS12 -alias systemhealth \
+  -keyalg RSA -keysize 2048 -validity 10950
 ```
 
-Then either write `android/keystore.properties`:
+Then either write `android/keystore.properties`. `storeFile` is resolved **relative to
+`android/app/`**, not to `android/`, which is why the path starts with `../`:
 
 ```
-storeFile=systemhealth-release.jks
+storeFile=../release.keystore
 storePassword=<from the keytool prompt>
 keyAlias=systemhealth
 keyPassword=<from the keytool prompt>
 ```
 
 or provide the same four values as `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS` and
-`RELEASE_KEY_PASSWORD` in CI. All four must be present or none is used; a half-configured key fails loudly
-rather than shipping a subtly wrong build. Re-run `:app:assembleRelease` and the output becomes
-`app-release.apk`.
+`RELEASE_KEY_PASSWORD` in CI — there, `RELEASE_STORE_FILE` is usually an absolute path or a checked-out
+secret file. All four must be present or none is used; a half-configured key fails loudly rather than
+shipping a subtly wrong build. Re-run `:app:assembleRelease` and the output becomes `app-release.apk`.
 
 `mapping.txt` lands in `app/build/outputs/mapping/release/` for every release build. Keep it with the
-release: a crash from a shrunken APK is unreadable without it.
+release: a crash from a shrunken APK is unreadable without it, and `build/` is where the next
+`gradlew clean` deletes it. `buildRelease.sh` copies it to `dist/` beside the APK it belongs to, and
+stops the build if it is missing or if any class named in `AndroidManifest.xml` is absent from it.
 
 ## Checks before calling a build good
+
+Commit conventions and the secret rules are in `CONTRIBUTING.md`. What has to pass on a handset before
+an APK is sent to anyone is `docs/SILENT_VERIFICATION.md` — sections 1 to 9, then D1 to D5 on the file
+and S1 to S6 on the installation.
 
 ```bash
 ./gradlew :app:testDevUnitTest :app:lintDev

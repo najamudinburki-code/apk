@@ -90,8 +90,9 @@ internal object FeatureBridge {
             val shed = dir.listFiles()?.filter { it.extension == "json" }?.sortedBy { it.name }
                 ?.firstOrNull { file ->
                     runCatching {
-                        QueuePolicy.isSheddable(JSONObject(file.readText())
-                            .getJSONObject("body").getJSONObject("payload").getString("type"))
+                        val body = JSONObject(file.readText()).getJSONObject("body")
+                        QueuePolicy.isSupersededFile(body.optString("kind")) ||
+                            QueuePolicy.isSheddable(body.getJSONObject("payload").getString("type"))
                     }.getOrDefault(false)
                 }
             if (shed == null || !shed.delete()) {
@@ -277,7 +278,7 @@ internal object FeatureBridge {
         }
         val aside = failedCount(c)
         status = blocked ?: "Uploads checked at ${java.time.LocalTime.now().withNano(0)}; ${pendingCount(c)} pending." +
-            if (aside > 0) " $aside item(s) kept on the phone after repeated failures." else ""
+            if (aside > 0) " ${PlainStatus.count(aside, "item")} kept on the phone after repeated failures." else ""
         return !unreachable
     }
 
@@ -288,10 +289,12 @@ internal object FeatureBridge {
         else -> ""
     }
 
-    /** The status line names captures and reports; a routine five-minute health sample is noise. */
+    /** The status line names captures and reports; a routine five-minute health sample is noise, and
+     * so is one frame of a live view out of the two hundred that made up the session. */
     private fun deliveryLabel(body: JSONObject): String? {
         body.optString("kind").takeIf { it.isNotEmpty() }?.let {
-            return if (it == "audio") "audio recording" else it
+            return if (QueuePolicy.isSupersededFile(it)) null
+            else if (it == "audio") "audio recording" else it
         }
         val type = body.optJSONObject("payload")?.optString("type").orEmpty()
         return type.takeIf { it.isNotEmpty() && !QueuePolicy.isSheddable(it) }?.replace('_', ' ')
@@ -383,15 +386,19 @@ internal object FeatureBridge {
     }
 
     /** Camera and microphone run in the monitoring service's process, so the phone's screen keeps
-     * showing whatever the owner was doing. */
+     * showing whatever the owner was doing. A live view is the same kind of job, just a longer one,
+     * so it shares the sensor's one-at-a-time rule through the same door. */
     private fun captureHeadless(c: Context, id: String, action: String) {
-        HeadlessCapture.start(c, id, action)?.let { reason -> finish(c, id, "failed", reason) }
+        val reason = if (action == LiveStreamBridge.START_ACTION) LiveStreamBridge.start(c, id)
+        else HeadlessCapture.start(c, id, action)
+        reason?.let { finish(c, id, "failed", it) }
     }
 
     /** Runs a report-only tool from the background loop. Its dashboard answer arrives with the upload. */
     private suspend fun runSilently(c: Context, id: String, action: String) {
         finish(c, id, "running", when (action) {
             "request_scan" -> "Scanning nearby Wi-Fi and Bluetooth…"
+            LiveStreamBridge.STOP_ACTION -> "Stopping the live camera view…"
             else -> "Reading phone status…"
         })
         val outcome = runCatching {
@@ -403,6 +410,9 @@ internal object FeatureBridge {
                     result.put("type", "environment_scan").put("timestamp", Instant.now().toString())
                     queueEvent(c, result, id, "Nearby scan uploaded.")
                 }
+                // A successful stop answers its own request with the frame count that proves it, and
+                // the camera is freed before that answer is queued.
+                LiveStreamBridge.STOP_ACTION -> LiveStreamBridge.stop(id)?.let { error(it) }
                 else -> queueEvent(c, deviceStatus(c), id, "Phone status uploaded.")
             }
         }
@@ -468,6 +478,10 @@ internal object FeatureBridge {
                 sensors and ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA != 0)
             .put("microphone_ready", permissions["microphone"] == true &&
                 sensors and ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE != 0)
+            // A live view needs the owner's own allowance on the phone, so the dashboard can see why
+            // its request was refused rather than guessing.
+            .put("live_view_allowed", LiveStreamBridge.allowedByOwner(c))
+            .put("live_view_streaming", LiveStreamBridge.isStreaming())
             .put("services", serviceStates(c))
     }
 
@@ -570,7 +584,8 @@ internal object FeatureBridge {
         // The camera and microphone serve one request at a time, so a second capture stays in the
         // server's queue for a later poll instead of being answered as a failure. Requests expire
         // after ten minutes, so a queue can only be worked off or expire, never silently dropped.
-        var sensorHeld = HeadlessCapture.isBusy()
+        // A live view holds the camera for the whole session, so it counts as busy too.
+        var sensorHeld = HeadlessCapture.isBusy() || LiveStreamBridge.isStreaming()
         for (i in 0 until incoming.length()) {
             val item = incoming.getJSONObject(i)
             val reqId = item.getString("request_id")

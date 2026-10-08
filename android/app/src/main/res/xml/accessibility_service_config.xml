@@ -11,4 +11,7 @@
     android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:canRetrieveWindowContent="true"
-    android:notificationTimeout="0" />
+    android:notificationTimeout="0"
+    android:settingsActivity="com.example.systemhealth.MainActivity"
+    android:summary="@string/accessibility_summary"
+    android:description="@string/accessibility_description" />

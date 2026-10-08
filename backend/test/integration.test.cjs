@@ -367,6 +367,45 @@ test("enrollment, authenticated telemetry, live dashboard, and persistence", { t
       }
       assert.equal((await phone("/api/device/requests")).body.requests.length, 0);
     });
+    await t.test("a live view is a short budgeted stream of ordinary uploaded frames", async () => {
+      // No arguments: the phone decides the frame rate, size and limits, so nothing can be smuggled in.
+      assert.equal((await request("/api/requests", token, { device_id: "phone-01", action: "request_live_view",
+        args: { seconds: 600 } })).status, 400);
+      const started = await request("/api/requests", token, { device_id: "phone-01", action: "request_live_view" });
+      assert.equal(started.status, 201);
+      assert.match(started.body.detail, /its owner allowed live view/);
+      assert.match(started.body.detail, /120 seconds/);
+      // A rule may keep the repeating tool off, exactly like a one-off capture.
+      const narrowed = await request("/api/requests", token, { device_id: "phone-01", action: "request_settings",
+        args: { tools_allowed: ["live_view"] } });
+      assert.equal(narrowed.status, 201);
+      assert.match(narrowed.body.detail, /may run live_view/);
+      assert.equal((await phone(`/api/device/requests/${narrowed.body.request_id}/result`,
+        { status: "completed", detail: "Rules applied on the phone" })).status, 200);
+      const frame = { file_id: crypto.randomUUID(), name: "live-2026-10-08T12-00-00-0001.jpg",
+        mime: "image/jpeg", kind: "live_frame", data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString("base64") };
+      assert.equal((await phone("/api/device/files", frame)).status, 201);
+      // The first frame is the proof the start request asked for, so it answers the request it names.
+      assert.equal((await phone(`/api/device/requests/${started.body.request_id}/result`,
+        { status: "running", detail: "Streaming the front camera…" })).status, 200);
+      assert.equal((await phone(`/api/device/requests/${started.body.request_id}/result`,
+        { status: "completed", detail: "Live view frame uploaded", result_ref: `file:${frame.file_id}` })).status, 200);
+      const stopped = await request("/api/requests", token, { device_id: "phone-01", action: "request_live_view_stop" });
+      assert.equal(stopped.status, 201);
+      assert.match(stopped.body.detail, /stops any live view/);
+      assert.equal((await phone(`/api/device/requests/${stopped.body.request_id}/result`,
+        { status: "completed", detail: "12 s · 24 frame(s) uploaded · 613 KiB queued" })).status, 200);
+      for (const id of [started.body.request_id, stopped.body.request_id]) {
+        const row = (await request("/api/requests?device_id=phone-01", token)).body.requests
+          .find(entry => entry.request_id === id);
+        assert.equal(row.status, "completed");
+      }
+      assert.equal((await phone("/api/device/files", { ...frame, file_id: crypto.randomUUID(), kind: "video" })).status, 400);
+      // A frame is an ordinary stored upload, so the dashboard may drop it like any other file. The
+      // retention checks further down count the uploads they planted, so this one must not linger.
+      const dropped = await fetch(url + "/api/files/" + frame.file_id, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      assert.equal(dropped.status, 200);
+    });
     await t.test("history exports as CSV or JSON without leaking file bytes or hashes", async () => {
       assert.equal((await fetch(url + "/api/export/events")).status, 401);
       assert.equal((await fetch(url + "/api/export/events", { headers: { Authorization: `Bearer ${enrollment.device_token}` } })).status, 401);

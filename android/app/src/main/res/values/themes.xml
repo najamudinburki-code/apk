@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- DeviceDefault rather than Material: this is the phone maker's own palette, so the theme
+         attributes the screens resolve (colorPrimary, colorError, colorBackground, textColorPrimary
+         and textColorSecondary) come back as colours that already match the system theme. That is what
+         lets one set of layouts stay readable in light and in dark, with dialogs, spinners and the
+         status-bar tint following the same mode without a second style sheet. -->
+    <style name="AppTheme" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

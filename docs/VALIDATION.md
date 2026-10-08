@@ -1,3 +1,203 @@
+# Validation — handset session, 8 October 2026 evening
+
+Driven on the owner's **TECNO Camon 20 (model CK6n, Android 14, HiOS)** over wireless ADB, running the
+`dev` variant `0.5.0-dev` against the laptop's local backend through `adb reverse tcp:3000 tcp:3000`.
+Every claim below was read off the phone's own screen (screenshot plus `uiautomator` hierarchy), not off a
+build log. This is the session that the "not verified — no phone attached" rows in the record underneath
+were waiting for; those rows stay as written for the day they describe.
+
+**Live behaviour confirmed.** Monitoring ran the whole session and the home screen and tools screen both
+showed server-acknowledged deliveries advancing on their own — `Last confirmed delivery: 8 Oct, 20:26:54`,
+then `8 Oct, 20:31:28`, then `20:36:37` — so the ~5-minute cadence and the "confirmed by the server"
+wording are real, not a button echo. Eight items left over from an earlier interrupted run stayed
+reported as `8 items could not be sent and are kept aside` rather than being quietly dropped or counted
+as sent. After `adb install -r` killed the service, the home screen read **"Ready — monitoring stopped"**
+with `Sharing is off. Nothing reaches your dashboard until you start monitoring.` — it did not keep
+claiming a session it no longer had. Restarting monitoring was left to the owner's own finger.
+
+**Ten defects the handset showed and the build never could.** All are fixed, rebuilt and re-checked on the
+phone unless a row says otherwise:
+
+1. The primary button was invisible in dark mode: this ROM's `colorPrimary` is `#181B25`, the same colour
+   as its own window background. The kit now picks the first theme accent that is actually distinguishable
+   from the page (`accentColor()`), and the button was re-photographed painting solid blue with white text.
+2. A `RippleDrawable` given a null mask never paints its content here — the button stayed the colour of the
+   card. Filled buttons are now a `StateListDrawable` of rounded fills with a darker pressed copy.
+3. Cards were indistinguishable from the page behind them, so the page read as one long column. Card fill
+   is now lifted from the resolved surface and the emphasis border uses the same guarded accent.
+4. `android.R.attr.colorError` on this ROM's light theme is `#FF5722`, which measures 2.4–2.8:1 as text.
+   Alert words now go through `readableInk()`, which darkens that same colour until it reaches 4.5:1; the
+   Stop outlines keep the loud colour and only the words change.
+5. `Nothing waiting to upload` was drawn in the alert colour unconditionally — a red alarm saying nothing
+   was wrong. The uploads row now goes red only when something is actually waiting, and the separate
+   "Could not be sent" row carries the real alarm.
+6. The search hint was ellipsized. Shortening it once fixed it at normal text and broke it again at 1.3×
+   (`Search tools — try "photo" or "…`), which is a broken-looking field rather than a hint. It is now
+   simply `Search tools`, and the example words live in the tool names themselves. **This one is built and
+   installed but not yet re-photographed** — the shortened string has not been seen on the tools screen,
+   because that screen needs the owner's finger (see "Still not verified").
+7. **Searching emptied the whole tools screen.** A card-level flag hid everything the moment the box had
+   any text, so the page appeared to have no tools at all. That flag is gone: a card leaves the page only
+   when nothing inside it survives the filter, and the way out is pinned (`Back to monitoring` now carries
+   `staysVisible = true`, as every Stop-weight control already did). Re-checked with `photo`, with `stop`,
+   and with the box cleared.
+8. The connection row could read `Not confirmed: Server accepted this phone` — quoting an older success as
+   though it were the present state. It now reads `Not confirmed. Last report said: …`.
+9. `8 item(s)`, `2 request(s)`, `4 frame(s)`, `3 upload(s)` were shown to the owner as `(s)` placeholders.
+   One tested helper (`PlainStatus.count`) now covers all six sites.
+10. **The home screen nagged about a server that was answering it.** `ConnectionDiagnostics.verified()` only
+    counted a manual "Check the connection now" tap within the last two minutes, and an acknowledged upload
+    wrote a different key entirely. So with samples landing at 20:26:54, 20:31:28 and 20:36:37 the phone still
+    read `Connected to your dashboard → Not confirmed`, and the headline stayed "Needs your attention" with a
+    `Check the connection again` button, while the dashboard was receiving data the whole time. Only the phone
+    could show this, because on the PC the two minutes are a constant nothing ever changes. A delivery now
+    proves the connection for `deliveryWindowMs` = three sample periods with a 15-minute floor, and a manual
+    probe still counts for its own two minutes. `ConnectionDiagnosticsTest` covers the window against the
+    phone's own cadence (1, 5, 10 and 240 minutes) and the inside/boundary/outside/fresh-boot cases.
+    **Re-built and installed; the no-probe flip has not been re-photographed yet** — it needs monitoring
+    running long enough for the probe flag to expire, which is the next check in this session.
+
+**What the phone said when the laptop stopped answering, and when it was busy.** Twice the dev tunnel died
+(`adb reverse` ends with the ADB session, not with the app). Both times the phone stopped advancing
+"last delivery" and said so, and the eight items already in the queue stayed reported as unsent instead of
+being counted as delivered. Later, while a Gradle build had the laptop's load average at 24, a connection
+probe timed out and the phone reported `Server is slow or waking up. Keep the app open and retry.` — the
+truth: the server was up, it just could not answer in fifteen seconds. Nothing in this session ever showed a
+fake success. The one behaviour worth knowing before relying on dashboard requests: after repeated failures
+the queue loop backs off to `cadenceMs` = 20 s, 40 s, 80 s, 160 s, capped at 300 s, so a queued request can
+sit for up to five minutes after the connection comes back, while the home screen correctly says monitoring
+is on. Requests expire after ten minutes, so the cap is smaller than the expiry and nothing is dropped.
+
+**Appearance matrix actually photographed.** Home in light and in dark, at the phone's normal text size and
+at `font_scale 1.3`; Device tools in dark at both sizes (its light capture at 1.3 is the one cell still
+open, waiting on the tap described under "Still not verified"). Headings, card titles, secondary labels,
+alert rows, the camera spinner, checkboxes, the fold, the search box and every button weight render with
+readable contrast and nothing truncates or overlaps; Stop buttons wrap to two lines instead of clipping.
+Dark mode was forced with `cmd uimode night yes` and returned to the phone's own auto setting afterwards,
+and the text scale was put back to `1.0`.
+
+**Tool search, measured.** `photo` keeps the photo tool, the pinned state rows and the Stop controls;
+`stop` keeps `Stop the recording`, `Stop the live camera view now`, `Stop sharing location`,
+`Cancel the active request` and `Back to monitoring`, and also `Take one screenshot` because its own
+explanation ends "one capture, then it stops" — a match on real wording, not a filter bug. Emptying the box
+restores all seven cards.
+
+**Re-measured on the build PC after these fixes:** `:app:assembleDev` and `:app:testDevUnitTest` →
+BUILD SUCCESSFUL, **129 checks across 19 classes, 0 failures, 0 errors, 0 skipped** (counted from
+`app/build/test-results/testDevUnitTest/`; 127 across 18 before the tenth defect was fixed, the extra two
+being the new `ConnectionDiagnosticsTest`). `:app:lintDev` was last run before that fix: **0 errors, 82
+warnings** in the pre-existing categories (`UseKtx` 47, `InlinedApi` 17, `ObsoleteSdkInt` 8,
+`StaticFieldLeak` 5, dependency and target-SDK notices). It has not been re-run since, because a Gradle
+build on this laptop is heavy enough to make the phone's connection probes time out.
+
+**Still not verified.** The guided setup screen has never been rendered on a handset: it is not exported, so
+neither `am start` nor `run-as … am start` could open it and no scripted tap was attempted. TalkBack was not
+run — reading order, heading announcements and the polite live regions are designed for but unmeasured, so
+START-HERE.md no longer claims the app "speaks properly to TalkBack". Also unmeasured: the geofence and
+enrolment dialogs' hint text at enlarged font, rotation, small screens, and every capture path inside the
+rebuilt screens (photo, microphone, screenshot, live view, scan, sharing, uploads) beyond the telemetry and
+delivery states quoted above. Reboot, long Doze idle and the release-signed APK against Render remain as the
+older records describe them.
+
+**This does not make the app release-ready.** It is a `dev`-variant debug build pointed at a laptop, and the
+release artifact has still never been installed on a phone.
+
+---
+
+# Validation — interface rebuild (source), 2026-10-08
+
+Measured on the build PC right after the last UI edit. No phone or emulator was attached, so nothing here
+is evidence about appearance, screen readers or a sensor. The live camera view record below is that
+feature's own run and stays accurate for it; the check counts changed because this pass added 34 checks.
+
+- Android: `:app:testDevUnitTest` → BUILD SUCCESSFUL, **127 unit checks across 18 test classes, 0 failures,
+  0 errors, 0 skipped**, counted from `app/build/test-results/testDevUnitTest/` rather than a console line.
+  93 were passing before this pass.
+- New Android coverage, all Android-free logic so it runs on the JVM: `HomeOverviewTest` (13 — each blocker
+  picks its own primary action, a running session with nothing to fix offers no button, an unacknowledged
+  first sample is never reported as delivered, the four calm service lines stay out of the attention card
+  while any other line is promoted to it, a live stream / unsent items / a stalled queue and an available
+  update each come with the way out, Stop rows appear only with something to stop, and rules, reports and
+  waiting requests are listed only when they exist); `ToolCatalogTest` (11 — every id tagged on the tools
+  screen exists in the catalog and ids are unique, every category has a tool, every control has a name and
+  an explanation, blank search shows everything, "stop" keeps every way to stop something, extra words
+  narrow instead of widening, an unmatched word hides the card rather than showing all of it, and an unknown
+  dashboard action keeps the server's own name instead of a guess); `PlainStatusTest` (10 — all eight ledger
+  states and an unknown one, permission names and the Settings route after a refusal, a reason for every
+  setup step, on/off pairs, the three live-view states, singular and plural counts, absent rules and
+  schedules saying so, and a saved local file never described as uploaded).
+- Android: `:app:assembleDev` → BUILD SUCCESSFUL, `app/build/outputs/apk/dev/app-dev.apk`.
+- Android: `:app:lintDev` → BUILD SUCCESSFUL, **0 errors**, 82 non-blocking warnings in the pre-existing
+  categories (`UseKtx` 47, `InlinedApi` 17, `ObsoleteSdkInt` 8, `StaticFieldLeak` 5, dependency notices).
+  Nothing new in kind: the kit resolves colours from the theme and holds no static context.
+- Files: 4 new in `app/src/main/java/com/example/systemhealth/` (`ScreenKit.kt`, `HomeOverview.kt`,
+  `ToolCatalog.kt`, `PlainStatus.kt`), 2 new resources (`res/values/themes.xml`, `res/values-night/themes.xml`),
+  3 rewritten screens (`MainActivity.kt`, `FeaturesActivity.kt`, `PermissionSetupActivity.kt`), 1 manifest
+  line (the app theme), 3 new test files. No service, receiver, permission, `build.gradle.kts` dependency,
+  backend or dashboard file was touched.
+- Preserved by inspection: enrollment (automatic and manual), every consent dialog and its wording, the
+  two Stop controls, all tool actions and their request states, the dashboard-rule semantics, the single
+  file outbox, all preference keys (`permission_setup`, `feature_options`, `remote_policy`,
+  `system_health_settings`, the screen-monitor prefs) and the device identity. `docs/UI-BEFORE-AFTER.md`
+  maps each old control to where it is now.
+- Caught by the compiler and fixed: a data class nested inside an inner class, `DisplayMetrics.fontScale`
+  (the scale is on `Configuration`), `android.R.attr.colorSurface` (not a framework attribute — the card
+  fill now resolves `colorBackground` with a measured fallback), and
+  `NotificationManagerCompat.getEnabledListenerPackages()`, which takes a `Context` and was being handed a
+  package name.
+- Still unverified without a handset: light and dark appearance and the resolved contrast, large system
+  font layout, small screens, long device names, empty lists and keyboard behaviour over the search box,
+  TalkBack order, heading announcements and the change-gated redraw, the refused-permission guidance
+  rendering after a real decline, setup resuming from a mid-wizard exit and after rotation, and every
+  capture, sharing and upload path. A green build says nothing about those.
+- This is a `dev`-variant debug build against a local server. It is not signed for release and must not be
+  called release-ready on the strength of these checks.
+
+## Previous validation record: live camera view
+
+Measured on the build PC the same day the feature was written. No phone was attached, so nothing below
+is evidence about a camera, a sensor light, or a notification.
+
+- Android: `:app:testDevUnitTest` → BUILD SUCCESSFUL, **93 unit checks across 15 test classes, 0 failures,
+  0 errors, 0 skipped** (read from `app/build/test-results/testDevUnitTest/`, not from a console line).
+  Only the `dev` variant was re-run after this feature; `testDebugUnitTest`, `assembleDebug` and
+  `assembleRelease` have not been re-run since, so the 0.5.0 rows below still describe those.
+- Android: `:app:compileDevKotlin`, `:app:assembleDev` and `:app:lintDev` → BUILD SUCCESSFUL, **0 lint
+  errors**, 99 non-blocking warnings in the same pre-existing categories (the new `StaticFieldLeak` row
+  for `LiveStreamBridge.session` matches the three the verified `HeadlessCapture` already has: it holds
+  an application context, and the session reference is cleared when the stream ends).
+- A review pass over the new code found three defects, all now fixed and rebuilt: the session's time and
+  byte limits were only checked **when a frame arrived**, so a camera that delivered one frame and then
+  went quiet without reporting an error would have held the lens and blocked every later live view until
+  monitoring stopped (a deadline job now ends it, reusing the same `limitReached` wording); the started/
+  ended alerts and the notice refresh ran outside the throw-safe queue, so a failing notification could
+  strand an open camera; and the flag that decided which frame answers the request was a read-then-write
+  shared with the stop path, which could answer one request twice. `LiveViewPolicy.overBudget` was
+  removed as dead once `limitReached` proved to be the only limit anyone consults.
+- New Android coverage, all pure logic: `LiveViewPolicyTest` (10 — cadence gate, the 2 fps the owner is
+  told, preview size chosen inside VGA with a smallest-usable fallback, zero sizes refused, byte and
+  time limits and which reason is stated first); `CameraOwnerTest` (6 — first job wins, a live view
+  cannot take the lens from a photo, only the holder frees it, a late teardown cannot cut another job
+  off, and 8 threads starting at once produce exactly one winner); 5 rotation checks added to
+  `CameraSelectionTest` (Android's 0..3 rotation codes, front turns with the display and rear against
+  it, always a quarter turn); 2 added to `DeviceCommandRouterTest` (a live view is a headless capture,
+  its stop command is silent so it can never queue behind the lens it must free); 1 added to
+  `QueuePolicyTest` (a stale frame may be shed to clear a full queue, a photo or document may not).
+- Backend: `npm test` → **40 checks pass, 0 fail**. The new one covers the whole server-side shape of a
+  stream: arguments refused with 400 (the phone owns the rate and limits), the start request's wording
+  naming the owner allowance and the 120-second ceiling, `live_view` accepted as a rule, a `live_frame`
+  upload stored and linked as the proof that answers the request, the stop request accepted, both rows
+  ending `completed`, and an unknown `video` kind still refused. This run also caught a test I had
+  broken: my new upload made the later retention check count two files instead of one, so the live-view
+  check now deletes its own frame the way the dashboard would.
+- Dashboard: `npm run build` passes (387.02 kB JS bundle).
+- Not verified: whether a real camera opens, whether a frame is legible or upright, front versus rear on
+  this handset, the indicator and notice lines, every refusal message, the 10-second no-frame watchdog,
+  the deadline job that ends a stalled session at 120 s, the 6 MiB stop, behaviour when the vault or the
+  queue is full, airplane mode mid-stream, and whether the phone can start a second live view immediately
+  after stopping one. `START-HERE.md` and `docs/SILENT_VERIFICATION.md` carry those as phone checks to run.
+- No commit, push, deployment or production/Render data touched. Not in the delivered 0.5.0 APK.
+
 # Validation — Android update 0.5.0
 
 Checked on 2026-10-07 on the build PC. The Android rows below were first measured on the PC, then a physical-phone session was run the same evening; see "Physical phone session" for what a real handset confirmed and what still has no evidence.

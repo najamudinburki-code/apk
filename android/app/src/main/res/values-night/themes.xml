@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Only the theme parent differs at night. Every colour the screens paint is resolved from the
+         theme, so there is no second set of hard-coded dark values to keep in step. -->
+    <style name="AppTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

@@ -9,8 +9,8 @@ You have a compiled, signed **test APK**. You can install it directly; Android S
 Open [Install System Health](https://system-health-install.jkrick33.chatgpt.site) on your Android phone, or scan the QR shown there. This installation page is private to your ChatGPT account; sign in with that account if prompted.
 
 1. Tap **Download latest APK**, then open the downloaded file and tap **Install** or **Update**. Android may ask you to allow installation from that browser/file manager. This 0.5.0 test APK is the debug build, so on the computer that built it it keeps the same signing certificate as the previous delivered test APK and your existing enrollment and settings survive. A release build is unsigned until you give it your own key (see `docs/ANDROID-BUILD.md`); never reuse the debug key for a published app.
-2. Open System Health and follow **Connect → Permissions → Check**. Connection is automatic. Select the tools to prepare, allow the missing permissions, then review the connection check. Granted permissions are skipped, and missing permissions can be enabled later. The saved wizard stage and tool choices are kept when you leave setup.
-3. Tap **Finish — open home**. Check the server result, monitoring state and **Last successful upload**. That timestamp is recorded only after the server acknowledges an upload. New installations start health monitoring after permitted automatic enrollment and status-notification permission. Existing stopped monitoring remains stopped; tap Start when ready.
+2. Open System Health and follow **Connect this phone → Choose what this phone may do → Check and start**. Connection is automatic. Each permission line now says which tool needs it and what stays off without it, so you know why before Android asks. Select the tools to prepare, allow the missing permissions, then review the connection check. Granted permissions are skipped, and a permission you declined says how to change your mind later. The saved wizard stage and tool choices are kept when you leave setup.
+3. Tap **Finish — open home**, or **Start System Health Monitor** on the last step. Check the server result, monitoring state and **Last upload the server accepted**. That timestamp is recorded only after the server acknowledges an upload. New installations start health monitoring after permitted automatic enrollment and status-notification permission. Existing stopped monitoring remains stopped; the home screen puts **Start System Health Monitor** as its one main button when ready.
 
 If your backend health check already shows `api_version: 4` and `automatic_enrollment: true`, **no Render backend/dashboard redeployment is needed** for this Android update; the phone talks to the same routes it did in 0.4.0. Redeploy the bundled backend and dashboard when you want the new dashboard tabs (Phone rules, the Requests ledger, Activity log, Export) or the optional `APP_RELEASE_VERSION` update notice. The installation page is hosted separately from your existing dashboard; your data still goes to the configured Render backend.
 
@@ -18,7 +18,21 @@ If your backend health check already shows `api_version: 4` and `automatic_enrol
 
 Open **Device tools, location and shared files**. The photo tool now defaults to **Front camera**. **Rear camera** remains available in the camera selector; your selection is remembered. A missing chosen lens produces an error and does not silently substitute the other camera. Both local photo consent and reviewed dashboard photo requests show which lens is used.
 
-The home screen groups configuration and reader diagnostics under **Advanced settings**. Start, Stop, app-text sharing, guided setup and Device tools stay easy to reach. The local security audit, the settings backup/export/restore pair and the single-document file picker were removed on 2026-10-07, so their buttons, dashboard panel and server actions are gone; everything else keeps its name and entry point. Screenshot, location start and geofence approval still need the visible tools screen, because that is where Android asks for consent; camera and microphone answers to dashboard requests are captured headless inside monitoring that you started, with Android's own indicator showing. Nothing in this app captures without one of those consented paths.
+The home screen groups configuration and reader diagnostics under **Show details and diagnostics**. Start, Stop, app-text sharing, guided setup and Device tools stay easy to reach. The local security audit, the settings backup/export/restore pair and the single-document file picker were removed on 2026-10-07, so their buttons, dashboard panel and server actions are gone; everything else keeps its function. Screenshot, location start and geofence approval still need the visible tools screen, because that is where Android asks for consent; camera and microphone answers to dashboard requests are captured headless inside monitoring that you started, with Android's own indicator showing. Nothing in this app captures without one of those consented paths.
+
+## What changed on the phone's screens (8 October 2026)
+
+The app does the same things it did; the way you reach them is easier to read.
+
+- The home screen now answers, in order: is this phone connected, is monitoring on, is anything waiting to upload, does something need me — and then shows **one** main button for that situation. The two Stop buttons stay on that same first card whenever there is something to stop.
+- Anything that needs you appears in a red-edged **Needs your attention** card: a camera stream in progress, items that could not be sent, a version update, or Android refusing to keep monitoring running.
+- Long technical text moved into **Show details and diagnostics**, which stays available and keeps the exact wording for reading out loud.
+- Device tools is grouped into cards by purpose — Dashboard requests, Camera/microphone/screen, Location and places to watch, Nearby scan, Reports that repeat, Shared files, Notices and privacy — and a search box at the top narrows the page by ordinary words. Searching can never hide a Stop button, a state row, or the way back. ✅ checked on the phone 2026-10-08 with `photo` and `stop`.
+- Setup explains why each permission is needed before Android asks, marks all three steps as Done / You are here / Up next, and tells you what to do if you declined one. Not yet seen on a phone — see the note under the checklist below.
+- The screen follows your phone's light or dark setting and grows with your font size. The home screen was photographed on the Camon 20 in light and dark, at normal and enlarged (1.3×) text, and Device tools in dark at both. Controls carry spoken labels and card titles are announced as headings, but **TalkBack itself has not been run**, so the reading order is designed rather than tested.
+- Nothing is called finished just because you tapped a button. A file saved only on the phone says **Saved on this phone**; the same file is reported as received once the server accepts it, and **Files saved on this phone** shows which of the two each one is.
+
+`docs/UI-BEFORE-AFTER.md` lists every old button and where it is now.
 
 ## New in this version on the phone
 
@@ -33,11 +47,21 @@ The home screen groups configuration and reader diagnostics under **Advanced set
 - Run **Check connection** and confirm both a reachable server and accepted phone credentials. Disable internet briefly, retry, and confirm the app reports a connection problem instead of claiming it is connected. Partial — the reachable-server half is checked; the airplane-mode half is not.
 - Start monitoring and confirm the successful-upload timestamp changes after the first sample. Compare the dashboard sample time. ✅ 2026-10-07
 - Take an approved front-camera test photo. Confirm it is from the front lens in dashboard Files. Switch to Rear and repeat to check the retained option. Partial — photos arrive from the front lens selection; nobody has opened one to confirm the framing, and Rear has not been tried.
-- Expand **Advanced settings** and confirm manual connection settings, accessibility settings, notification access, reader reconnect and detailed status are still present. ✅ 2026-10-07
+- Live camera view, once you build this source into an APK: leave the new switch off and send the request —
+  it must come back **declined** naming the allowance, not stream. Then switch it on and send it, and confirm
+  the frames in **Files** are legible and upright, from the lens the selector shows, that the notice line and
+  Android's indicator appear for the whole run, that the request turns **completed** only when a frame has
+  arrived, that **Stop the live camera view now** ends it in the same second, that a second request works
+  after a stop, and that it stops itself at 120 seconds. Not tested — no handset has run this code.
+- Expand **Show details and diagnostics** and confirm manual connection settings, accessibility settings, notification access, reader reconnect and detailed status are still present. ✅ 2026-10-07 as **Advanced settings**; the fold holds the same controls with new wording, so it needs a second look
 - Send a **Phone rules** change from the dashboard (for example switch Photo off) and confirm it appears in the home-screen rule summary, that a later photo request comes back **declined** naming the rule, and that the dashboard shows the rule set the phone reported. Send the rules back on and confirm the photo works again without touching Android permissions. ✅ 2026-10-07, both directions
 - Switch on one **Scheduled report** at the shortest cadence, keep monitoring on, and confirm it arrives again without you tapping anything — then tap Stop and confirm it stops with monitoring. ✅ 2026-10-07 (status and scan both fired on their own; the audit and backup reports were taken out of the app afterwards)
 - If your backend sets `APP_RELEASE_VERSION`, confirm the home screen mentions only a version newer than the installed one, and shows nothing when the advertised version is the same or lower. ✅ 2026-10-07, against a deliberately advertised version
 - Confirm Stop ends sharing and the active notices clear. Quiet, grouped notifications remain visible; phone/OEM presentation can vary. Partial — reported working on the Camon 20, but the server recorded no answer behind it, so the notice-clearing half is unconfirmed by measurement.
+- Walk the rebuilt **Device tools** screen: search `photo`, then `stop`, then clear the box, and confirm a search never hides a Stop control or the way back, and that clearing it restores every card. ✅ 2026-10-08, both themes
+- Open both rebuilt screens in **light and dark** and with the system **text size enlarged**, and confirm nothing is unreadable, cut off or overlapping. Partial ✅ 2026-10-08 — the home screen in all four combinations and Device tools in dark at both sizes; this is what caught the invisible primary button, the sub-readable alert text and the two cut-off strings. Device tools in light at enlarged text, and guided setup in any combination, still need looking at.
+- Run **Guided setup and permissions** on the rebuilt screens, decline one optional permission, and confirm the refusal card explains that tool and links to the Android page; then leave setup halfway and come back. ❌ Not done — that screen is not openable from a computer, so it needs your finger. Tell the dashboard owner what it shows.
+- With TalkBack on, listen to the home screen top to bottom and confirm the reading order and the announced headings. ❌ Not done — spoken labels are in place but nobody has heard them.
 
 This is a signed test APK. Build, lint and unit checks pass. Several of the checks above were re-run on a
 physical TECNO Camon 20 (Android 14) on 2026-10-07 against a **local development backend**, and the results
@@ -45,6 +69,12 @@ are recorded in `docs/VALIDATION.md`; the ticks mark those. That session found a
 bugs, so it does not clear the release build: the hosted, release-signed APK with Render has still never
 been run on a phone, and reboot/auto-start, long Doze idle, screen capture on this OEM and geofence entry
 remain untested.
+
+The same phone was driven again on the evening of **2026-10-08** against the local backend to check the
+rebuilt interface: monitoring, server-confirmed deliveries, both themes, enlarged text, and the tools search
+were all photographed, and nine appearance defects were found and fixed — the full list, with what a
+computer cannot reach, is at the top of `docs/VALIDATION.md`. That pass changed nothing about the sentence
+above: it was a debug build against a laptop, so the release artifact is still untested on a phone.
 
 The sections below describe first-time deployment. Skip them if your current version-4 backend/dashboard already work.
 
@@ -121,7 +151,7 @@ If you change the backend's URL later, update the normal `API_BASE_URL` in `andr
 
 For screen text and notifications:
 
-1. Tap **Approve app text and notifications**.
+1. Tap **App text and notification sharing** on the home screen, then **Approve sharing** in the dialog.
 2. Leave **All supported apps automatically** selected, tap **Continue**, read the disclosure, then tap **Approve sharing**. No package names need to be typed. Newly installed supported apps are included automatically. You can still use **Choose apps by name** to restrict sharing.
 3. Enable **one** of the two System Health screen readers in Accessibility settings. Enable **Notification Reader** in Notification access settings.
 4. If Android shows “Restricted settings”, open the System Health app-information page, use its menu's **Allow restricted settings** option, then return to the access setting.
@@ -135,17 +165,20 @@ Open **Device tools, location and shared files** in the phone app.
 
 | Tool | What to do | Where to see the result |
 | --- | --- | --- |
-| Camera | Take and share photo; allow Camera permission | Dashboard **Files** |
-| Microphone | Start recording; allow Microphone; keep the tools screen open; tap Stop | **Files**, with audio playback/download |
-| Screenshot | Approve Android's screen-sharing dialog; open the selected screen during the 5-second countdown | **Files** |
-| Location | Start sharing location; allow precise location; enable GPS | **Location**, with accuracy and sample time |
-| Geofences | Add a name, coordinates and radius; grant Location **Allow all the time**; start location sharing | **Location → Geofence events** |
-| Nearby scan | Enable Wi-Fi, Bluetooth and Location; run one scan on the phone, or send the dashboard request and it runs without opening the screen | **Nearby scans** |
-| Folder browsing | Choose a folder with Android's picker, open it on the phone, then confirm the one file to upload | **Files** |
+| Camera | Choose front or rear under **Which camera**, then **Take one photo**; allow Camera permission | Dashboard **Files** |
+| Live camera view | Allow **Allow the dashboard to start a live camera view** on the tools screen (off until you switch it on), keep monitoring running, then send the dashboard request; tap **Stop the live camera view now** to end it early | **Files**, as a stream of small JPEG frames, with a start and a stop row in the phone's logs |
+| Microphone | **Record microphone audio**; allow Microphone; keep the tools screen open; tap **Stop the recording** | **Files**, with audio playback/download |
+| Screenshot | **Take one screenshot**, then approve Android's screen-sharing dialog; open the selected screen during the 5-second countdown | **Files** |
+| Location | **Start sharing location**; allow precise location; enable GPS | **Location**, with accuracy and sample time |
+| Geofences | **Watch an area** — add a name, coordinates and radius; grant Location **Allow all the time**; start location sharing. **See or remove watched areas** lists them | **Location → Geofence events** |
+| Nearby scan | Enable Wi-Fi, Bluetooth and Location; **Scan nearby Wi-Fi and Bluetooth** on the phone, or send the dashboard request and it runs without opening the screen | **Nearby scans** |
+| Folder browsing | **Choose a folder to browse** with Android's picker, open it on the phone, then confirm the one file to upload. **Files saved on this phone** says whether each one was received by the server or is still waiting | **Files** |
 | Remote requests | Send a request in dashboard **Requests** or **Phone rules**; the ledger shows pending → delivered → running → completed / reviewed / declined / failed / expired | Request result, then the corresponding output panel |
-| Scheduled reports | On the tools screen pick a cadence and switch on phone status or a nearby scan | Same output panels as the one-off tool, repeated while monitoring runs |
+| Scheduled reports | On the tools screen pick **How often** and switch on the phone status report or the nearby scan | Same output panels as the one-off tool, repeated while monitoring runs |
 
 Phone status, nearby scans, photo capture and microphone recording run in the background: a dashboard request for any of them never opens the phone's screen. Android hands out camera and microphone access only when monitoring starts from a visible app, so tap **Start monitoring** in the app after installing or after any boot; a session that Android restarted at boot keeps reporting and screen reading but answers a photo or microphone request with a failure you can re-send after starting monitoring yourself. Android still shows its own camera and microphone indicator while they run, and that indicator cannot be turned off by the app. Screenshot, location and geofence approval still need the visible tools screen because Android asks for consent there, so those requests open it; Android can refuse that launch while the screen is locked, and the request then reports a failure you can re-send. A recording or photo started on the tools screen stops when you leave it. A dashboard microphone request records for 15 seconds.
+
+**Live camera view** (in source as of 2026-10-08, not yet in the delivered APK) is the one tool that repeats instead of answering once, so it has its own switch and its own limits. Nothing streams until you tick **Allow the dashboard to start a live camera view** on the tools screen, which is off in a fresh install. A session then sends about two small frames a second for at most 120 seconds or 6 MiB and stops by itself; the monitoring notice reads "Live camera view is streaming to your dashboard" while it runs, Android's camera indicator stays lit and cannot be suppressed, and the phone logs a start row and a stop row with the frame, byte and skipped counts. **Stop the live camera view now** on the same screen ends it early, and so does the dashboard's Stop request even if your rules keep the tool off — a rule can prevent a stream, never strand one. A photo or microphone request sent during a stream waits for the lens instead of failing.
 
 A request that a dashboard rule keeps switched off is answered **declined** with the rule named, so the ledger never shows something as delivered that quietly did nothing. "Completed" means the phone finished the action, and the ledger links the event or file that proves it; read the result detail and check the output panel to confirm delivery. Reports can be reviewed/exported locally without sharing them.
 
@@ -154,6 +187,22 @@ Uploads and request checks run about every 10 seconds while monitoring is on —
 Limits are displayed in the app: 4 MiB per file, 50 MiB of local saved tool files, 200 pending tool items, and 100 MiB / 500 cloud files per device. When the 200-item queue fills, the phone drops its oldest health or status sample to make room rather than discarding what it cannot remake. An item the server rejects permanently, or one that fails 40 times, moves to the app's internal unsent folder instead of blocking later uploads. Export or delete old local files when the phone vault is full; delete old cloud files from the dashboard when its quota is full. The server also deletes cloud history and uploaded files older than its retention window (30 days unless `RETENTION_DAYS` says otherwise), so export anything you want to keep. **Clear pending uploads** cancels unsent tool items while preserving local saved files.
 
 ## What was checked
+
+**8 October 2026, for the interface rebuild:** Android `:app:testDevUnitTest` → **127 checks across 18
+test classes, 0 failures** (the 34 new ones cover the home screen's decisions, the tool names and search,
+and the plain-word state text; one check proves every control tagged on the tools screen is named in the
+tool catalog). `:app:assembleDev` produced `app/build/outputs/apk/dev/app-dev.apk` and `:app:lintDev`
+passed with **0 errors**. No phone or emulator was attached, so the light/dark appearance, large-font
+layout, TalkBack order, the refused-permission guidance and every capture path are **unverified** — see
+`docs/UI-BEFORE-AFTER.md` for the split between what the build proves and what still needs the handset.
+Backend, dashboard, request actions, preference keys and enrollment were not changed.
+
+**8 October 2026, for the live camera view added since the 0.5.0 APK:** Android `:app:testDevUnitTest` →
+**93 checks, 0 failures** (dev variant only; the debug and release tasks have not been re-run since);
+`:app:assembleDev` and `:app:lintDev` pass with **0 lint errors**; backend `npm test` → **40 checks pass**;
+dashboard `npm run build` passes at 387.02 kB. No phone was attached for any of that, so the live view has
+never opened a camera, and the delivered APK below does not contain it. The rows after this one are the
+0.5.0 record.
 
 - Backend: `npm test` → **39 passing checks** against SQLite. They cover invitation-based joining and concurrent join retries, upgrade of pending phones, disabling future joins without disconnecting existing phones, legacy registration and approval/decline, token isolation, duplicate approval, expiry renewal, disabled phones, auth, rate limits, persisted telemetry, duplicate retries, 4 MiB files, downloads, the full request lifecycle including `running` and rule-blocked `declined`, the rules payload being rejected when it asks for an unknown tool or an out-of-range cadence, token rotation that revokes the old credential, the retention sweep, dashboard session revocation that survives a restart, the advertised APK release, and server restarts. The PostgreSQL code path only runs when `TEST_DATABASE_URL` points at a live database, which was not available for this run.
 - Android: **49 unit checks passed, zero failures** in both the `dev` and `debug` variants (request routing including the rules channel, upload cadence, outbox shedding and retirement, app-capture scope, camera selection, enrollment identity, permission plan, readiness, dashboard-rule interpretation, report scheduling, and update-version comparison). `:app:assembleDev`, `:app:assembleDebug`, `:app:assembleRelease`, `:app:lintDev` and `:app:lintDebug` all pass; lint reports **0 errors** (100 style/target-SDK warnings remain, none blocking). Package `com.example.systemhealth`, versionCode 8, versionName `0.5.0`, Android 8+. The release build runs R8 and writes `app-release-unsigned.apk`, so it must be signed with your own key before use; its deobfuscation map is at `app/build/outputs/mapping/release/mapping.txt`.

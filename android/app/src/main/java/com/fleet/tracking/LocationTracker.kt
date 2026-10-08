@@ -250,14 +250,6 @@ object LocationTracker {
 
     fun hasFineLocationPermission(): Boolean = isGranted(Manifest.permission.ACCESS_FINE_LOCATION)
 
-    /** Kept for the tools screen, which still offers "all the time" for owners who want it. */
-    fun hasBackgroundLocationPermission(): Boolean =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            isGranted(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-        } else {
-            hasFineLocationPermission()
-        }
-
     private fun isGranted(permission: String): Boolean =
         ContextCompat.checkSelfPermission(context, permission) == android.content.pm.PackageManager.PERMISSION_GRANTED
 

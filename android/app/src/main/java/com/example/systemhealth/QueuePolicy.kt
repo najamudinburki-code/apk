@@ -10,6 +10,11 @@ internal object QueuePolicy {
     private val sheddableTypes = setOf("system_health", "device_status")
     fun isSheddable(type: String): Boolean = type in sheddableTypes
 
+    /** A live-view frame is a sample in the same sense: the next frame replaces it, and a queue full
+     * of the past is worth less than the one capture the owner asked for. */
+    private val sheddableKinds = setOf("live_frame")
+    fun isSupersededFile(kind: String): Boolean = kind in sheddableKinds
+
     /** True when retrying cannot help: the server rejects this payload outright, the dashboard
      *  stopped waiting for this result, or the item has used up its patience. A 401 is answered
      *  by healing the enrollment instead, so it never retires however often it repeats. */

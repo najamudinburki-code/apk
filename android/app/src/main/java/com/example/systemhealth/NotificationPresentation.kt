@@ -92,18 +92,25 @@ object NotificationPresentation {
     fun ongoingText(context: Context): String {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val activity = prefs.getString(KEY_ACTIVITY, null)
-        if (!detailInOngoing(context)) return "Sharing with your dashboard"
         val pending = FeatureBridge.pendingCount(context)
-        return when {
-            pending > 0 -> "$pending upload(s) waiting" + (activity?.let { " · last sent $it" } ?: "")
+        val detail = when {
+            pending > 0 -> "${PlainStatus.count(pending, "upload")} waiting" + (activity?.let { " · last sent $it" } ?: "")
             activity != null -> "Last sent $activity"
             else -> "Sharing with your dashboard. No uploads yet."
         }
+        // A running stream is named whatever the owner's detail preference says: a photo is a moment,
+        // a live view is a minute or two of the camera, and that difference must always be readable.
+        return listOfNotNull(liveLine(), detail).joinToString(" · ")
     }
 
-    /** What the notice actually says: quiet by default, informative whenever the owner asks. */
+    /** What the notice actually says: quiet by default, informative whenever the owner asks, and
+     * never quiet while the camera is streaming. */
     fun compactText(context: Context): String =
-        if (detailInOngoing(context)) ongoingText(context) else "Active"
+        if (detailInOngoing(context) || LiveStreamBridge.isStreaming()) ongoingText(context) else "Active"
+
+    /** The camera's live view, in the owner's words, or null when nothing is streaming. */
+    fun liveLine(): String? =
+        if (LiveStreamBridge.isStreaming()) "Live camera view is streaming to your dashboard" else null
 
     /** A one-shot, silent heads-up for a sensor capture the owner cannot see happening. */
     fun captureAlert(context: Context, title: String, text: String) {

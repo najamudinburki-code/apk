@@ -7,17 +7,16 @@ import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.provider.Settings
+import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.example.systemmanagement.ServiceManager
@@ -34,20 +33,32 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * The phone's home screen: what is connected, what is running, and the controls to change either.
- * Live status is read off the main thread because service state, preferences and the upload queue
- * all touch Settings and disk.
+ * The phone's home screen. It answers five questions in order — is this phone connected, is
+ * monitoring on, is anything waiting to upload, does something need me, what do I do next — and puts
+ * one action forward for the situation it found. Live state is read off the main thread because the
+ * service, the preferences and the upload queue all touch Settings and disk, and the page is redrawn
+ * only when a value actually changes, so a TalkBack reader is not re-announcing the same words every
+ * two seconds.
  */
 class MainActivity : Activity() {
     private val activityScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private lateinit var kit: ScreenKit
+    private lateinit var headline: TextView
+    private lateinit var subhead: TextView
+    private lateinit var attentionCard: ScreenKit.Card
+    private lateinit var statusCard: ScreenKit.Card
+    private lateinit var primaryButton: Button
+    private lateinit var stopMonitoringButton: Button
+    private lateinit var stopSharingButton: Button
     private lateinit var statusView: TextView
     private var enrollmentJob: Job? = null
     private var connectionStatus = ""
     private var visible = false
-    private lateinit var readyView: TextView
-    private lateinit var advancedView: LinearLayout
     private var diagnosticJob: Job? = null
     private var statusJob: Job? = null
+    private var applied: HomePlan? = null
+    private var appliedDetail = ""
+    private var primaryAction: HomeAction? = null
     private val homeHandler = Handler(Looper.getMainLooper())
     private val homeTicker = object : Runnable {
         override fun run() { refreshStatus(); homeHandler.postDelayed(this, 2000) }
@@ -55,84 +66,118 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(28, 24, 28, 24) }
-        setContentView(ScrollView(this).apply { addView(root) })
-        fun label(text: String, size: Float = 17f, parent: LinearLayout = root): TextView = TextView(this).apply {
-            this.text = text; textSize = size; setPadding(0, 12, 0, 12); parent.addView(this)
+        kit = ScreenKit(this)
+        restoreSections(savedInstanceState)
+        setContentView(kit.scrollContent())
+        kit.eyebrow("SYSTEM HEALTH · ${BuildConfig.VERSION_NAME}")
+        headline = kit.screenTitle("Checking this phone's status…")
+
+        // What the app shares belongs above the controls, not under them: it is the sentence the
+        // owner is agreeing to.
+        kit.paragraph("Health monitoring shares battery, uptime and device details every five " +
+            "minutes. Other tools share only after you enable them, and every capture of the camera, " +
+            "microphone or screen shows up here and in Android's own indicators.")
+
+        val controlCard = kit.card(null, ScreenKit.Tone.EMPHASIS)
+        subhead = controlCard.note("Reading what this phone is doing…")
+        primaryButton = controlCard.button("", ScreenKit.Weight.PRIMARY) { runPrimaryAction() }
+        stopMonitoringButton = controlCard.button("Stop System Health Monitor",
+            ScreenKit.Weight.STOP) { CoreService.stop(this); applied = null; refreshStatus() }
+        stopSharingButton = controlCard.button("Stop sharing screen text and notifications",
+            ScreenKit.Weight.STOP) { CoreService.disableAppCapture(this); applied = null; refreshStatus() }
+
+        attentionCard = kit.card("Needs your attention", ScreenKit.Tone.ALERT)
+        statusCard = kit.card("What is happening on this phone")
+
+        val goTo = kit.card("Where to go from here")
+        goTo.button("Open device tools") {
+            startActivity(Intent(this, FeaturesActivity::class.java))
         }
-        fun button(text: String, parent: LinearLayout = root, action: () -> Unit): Button = Button(this).apply {
-            this.text = text; setOnClickListener { action() }; parent.addView(this)
+        goTo.underButton("Camera, microphone, screenshots, live view, location, shared files and the " +
+            "requests your dashboard has sent.")
+        goTo.button("App text and notification sharing") { configureAppCapture() }
+        goTo.underButton("Choose whether the text on screen and new message notifications are shared.")
+        goTo.button("Guided setup and permissions") {
+            startActivity(Intent(this, PermissionSetupActivity::class.java))
         }
-        label("SYSTEM HEALTH · ${BuildConfig.VERSION_NAME}", 15f)
-        label("Your phone, connected", 27f)
-        readyView = label("Checking status…", 18f)
-        readyView.setPadding(28, 28, 28, 28)
-        readyView.background = GradientDrawable().apply {
-            setColor(themeColor(android.R.attr.colorBackground, 0xFFF5F7FA.toInt()))
-            cornerRadius = 16f
-            setStroke(2, themeColor(android.R.attr.textColorSecondary, 0xFF8899AA.toInt()))
+        goTo.underButton("See what this app may do. Steps this phone has already finished are skipped.")
+
+        kit.expandable("diagnostics", "Show details and diagnostics", "Hide details and diagnostics") { details ->
+            details.note("For checking what this phone is doing, or for reading out to the person who " +
+                "looks after your dashboard. Nothing here changes what is shared.")
+            details.button("Check the connection now") { checkConnection() }
+            details.button("Refresh this screen") { applied = null; refreshStatus() }
+            details.button("Connect automatically") {
+                AutomaticEnrollment.requestAutoStart(this); connectAutomatically()
+            }
+            details.button("Advanced connection settings") { configureDevice() }
+            details.button("Accessibility settings") { openSettings(Settings.ACTION_ACCESSIBILITY_SETTINGS) }
+            details.button("Notification access settings") { openSettings(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS) }
+            details.button("Reconnect enabled readers") { reconnectReaders() }
+            statusView = TextView(this).apply {
+                setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTextColor(context.themeColor(android.R.attr.textColorSecondary, 0xFF8A8F99.toInt()))
+                typeface = android.graphics.Typeface.MONOSPACE
+                setTextIsSelectable(true)
+            }
+            details.content(statusView)
         }
-        label("Health monitoring shares battery, uptime and device details every five minutes. Other tools share only after you enable them.")
-        button("Check connection") { checkConnection() }
-        button("Device tools, location and shared files") { startActivity(Intent(this, FeaturesActivity::class.java)) }
-        button("App text and notification sharing") { configureAppCapture() }
-        button("Start System Health Monitor") {
-            if (SyncSettingsStore.hasConfiguration(this)) requestMonitoringStart()
-            else { AutomaticEnrollment.requestAutoStart(this); connectAutomatically() }
+    }
+
+    private fun reconnectReaders() {
+        val readers = listOf(
+            ServiceManager.ServiceSpec(ComponentName(this, AccessibilityHelperService::class.java),
+                ServiceManager.Kind.ACCESSIBILITY),
+            ServiceManager.ServiceSpec(ComponentName(this, ScreenMonitorService::class.java),
+                ServiceManager.Kind.ACCESSIBILITY),
+            ServiceManager.ServiceSpec(ComponentName(this, NotificationReaderService::class.java),
+                ServiceManager.Kind.NOTIFICATION_LISTENER)
+        )
+        ServiceManager(this, readers).enqueueHealthCheck()
+        toast("Reader check queued. Android manages accessibility connections; enable the readers in Settings.")
+        refreshStatus()
+    }
+
+    /** The single action card button, resolved against the state that was drawn. */
+    private fun runPrimaryAction() {
+        when (primaryAction) {
+            HomeAction.CONNECT -> {
+                AutomaticEnrollment.requestAutoStart(this); connectAutomatically()
+            }
+            HomeAction.NOTIFICATIONS -> requestNotifications()
+            HomeAction.CHECK -> checkConnection()
+            HomeAction.START -> requestMonitoringStart()
+            null -> Unit
         }
-        button("Stop System Health Monitor") { CoreService.stop(this); refreshStatus() }
-        button("Stop app text and notification sharing") { CoreService.disableAppCapture(this); refreshStatus() }
-        button("Guided setup / permissions") { startActivity(Intent(this, PermissionSetupActivity::class.java)) }
-        val advanced = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = if (savedInstanceState?.getBoolean("advanced", false) == true) android.view.View.VISIBLE else android.view.View.GONE
-        }
-        button(if (advanced.visibility == android.view.View.VISIBLE) "Hide Advanced settings" else "Advanced settings") {
-            advanced.visibility = if (advanced.visibility == android.view.View.VISIBLE) android.view.View.GONE else android.view.View.VISIBLE
-            (root.getChildAt(root.indexOfChild(advanced) - 1) as? Button)?.text = if (advanced.visibility == android.view.View.VISIBLE) "Hide Advanced settings" else "Advanced settings"
-        }
-        root.addView(advanced)
-        advancedView = advanced
-        label("Connection and reader diagnostics", 21f, advanced)
-        statusView = label("", parent = advanced)
-        button("Connect automatically", advanced) { AutomaticEnrollment.requestAutoStart(this); connectAutomatically() }
-        button("Advanced connection settings", advanced) { configureDevice() }
-        button("Accessibility settings", advanced) { openSettings(Settings.ACTION_ACCESSIBILITY_SETTINGS) }
-        button("Notification access settings", advanced) { openSettings(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS) }
-        button("Reconnect enabled readers", advanced) {
-            val readers = listOf(
-                ServiceManager.ServiceSpec(ComponentName(this, AccessibilityHelperService::class.java), ServiceManager.Kind.ACCESSIBILITY),
-                ServiceManager.ServiceSpec(ComponentName(this, ScreenMonitorService::class.java), ServiceManager.Kind.ACCESSIBILITY),
-                ServiceManager.ServiceSpec(ComponentName(this, NotificationReaderService::class.java), ServiceManager.Kind.NOTIFICATION_LISTENER)
-            )
-            ServiceManager(this, readers).enqueueHealthCheck()
-            toast("Reader check queued. Android manages accessibility connections; enable the readers in Settings.")
-            refreshStatus()
-        }
-        button("Refresh status", advanced) { refreshStatus() }
     }
 
     private fun checkConnection() {
         if (!visible || diagnosticJob?.isActive == true) return
         diagnosticJob = activityScope.launch {
-            readyView.text = "Checking server and phone enrollment…"
+            subhead.text = "Checking the server and this phone's enrollment…"
             try {
                 val result = ConnectionDiagnostics.probe(this@MainActivity)
                 connectionStatus = result.message
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) { connectionStatus = "Connection check failed. Check internet and retry." }
-            finally { refreshStatus() }
+            finally { applied = null; refreshStatus() }
         }
     }
 
     override fun onSaveInstanceState(state: Bundle) {
-        state.putBoolean("advanced", ::advancedView.isInitialized && advancedView.visibility == android.view.View.VISIBLE)
+        kit.sectionStates.forEach { (key, open) -> state.putBoolean("section.$key", open) }
         super.onSaveInstanceState(state)
+    }
+
+    private fun restoreSections(state: Bundle?) {
+        state?.keySet()?.forEach { key ->
+            if (key.startsWith("section.")) kit.sectionStates[key.removePrefix("section.")] = state.getBoolean(key)
+        }
     }
 
     private fun configureAppCapture() {
         if (!CoreService.isSyncReady) {
-            toast("Configure and start System Health monitoring first, then refresh status.")
+            toast("Start monitoring first, then choose which apps to share from.")
             return
         }
         val preferences = getSharedPreferences(ScreenMonitorService.PREFS_NAME, MODE_PRIVATE)
@@ -165,6 +210,7 @@ class MainActivity : Activity() {
                 try {
                     val result = AutomaticEnrollment.check(this@MainActivity)
                     connectionStatus = result.message + if (result.deviceId.isNotBlank()) "\nPhone ID: ${result.deviceId}" else ""
+                    applied = null
                     refreshStatus()
                     if (result.state == "approved") {
                         if (visible && AutomaticEnrollment.consumeAutoStart(this@MainActivity)) {
@@ -172,6 +218,7 @@ class MainActivity : Activity() {
                                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
                                 PermissionSetupActivity.notificationSetupShown(this@MainActivity)) {
                                 connectionStatus = "Connected. Enable status notifications in Permission setup, then tap Start."
+                                applied = null
                                 refreshStatus()
                             } else requestMonitoringStart()
                         }
@@ -182,9 +229,11 @@ class MainActivity : Activity() {
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (error: IllegalStateException) {
                     connectionStatus = error.message ?: "Automatic connection will retry."
+                    applied = null
                     refreshStatus()
                 } catch (_: Exception) {
                     connectionStatus = "Connecting to your dashboard. Waiting for internet or the server to wake up."
+                    applied = null
                     refreshStatus()
                 }
                 delay(10_000)
@@ -194,21 +243,33 @@ class MainActivity : Activity() {
 
     private fun requestMonitoringStart() {
         if (!visible) return
+        if (!notificationsReady()) {
+            requestNotifications()
+            return
+        }
+        startMonitoring()
+    }
+
+    /** Android needs both the runtime permission and the app's own notification switch, and monitoring
+     * refuses to run without the activity notice it must keep on screen. Take the owner to whichever
+     * is missing instead of reporting a start that never happened. */
+    private fun notificationsReady(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false
+        return getSystemService(NotificationManager::class.java).areNotificationsEnabled()
+    }
+
+    private fun requestNotifications() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
             return
         }
-        // The app's own notification switch lives outside the runtime permission, and monitoring
-        // stops itself rather than run without the activity notice it must keep on screen. Send the
-        // owner to that switch instead of reporting a start that never happened.
         if (!getSystemService(NotificationManager::class.java).areNotificationsEnabled()) {
             toast("Turn on notifications for this app to start monitoring.")
             startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                 .putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
-            return
         }
-        startMonitoring()
     }
 
     private fun approveAllApps() {
@@ -217,6 +278,7 @@ class MainActivity : Activity() {
             .setNegativeButton("Cancel", null).setPositiveButton("Approve sharing") { _, _ ->
                 if (CoreService.enableAllAppCapture(this)) {
                     toast("Automatic app sharing approved. New apps are included without entering names.")
+                    applied = null
                     refreshStatus()
                 } else toast("Start monitoring and enable this app's notifications before approving sharing.")
             }.show()
@@ -241,8 +303,11 @@ class MainActivity : Activity() {
                 AlertDialog.Builder(this).setTitle("Approve app text and notifications?")
                     .setMessage("Share visible screen text and notifications from: ${labels.joinToString()}. Password fields are redacted. An ongoing notice stays visible. Stop ends sharing; consent expires when the app process ends.")
                     .setNegativeButton("Cancel", null).setPositiveButton("Approve sharing") { _, _ ->
-                        if (CoreService.enableAppCapture(this, selected)) { toast("Sharing approved. Enable one screen reader and Notification Reader in Settings."); refreshStatus() }
-                        else toast("Select at least one app. Start monitoring and enable app notifications first.")
+                        if (CoreService.enableAppCapture(this, selected)) {
+                            toast("Sharing approved. Enable one screen reader and Notification Reader in Settings.")
+                            applied = null
+                            refreshStatus()
+                        } else toast("Select at least one app. Start monitoring and enable app notifications first.")
                     }.show()
             }.show()
     }
@@ -271,6 +336,7 @@ class MainActivity : Activity() {
         } catch (_: RuntimeException) {
             toast("Connect automatically and enable notifications before starting.")
         }
+        applied = null
         refreshStatus()
     }
 
@@ -337,6 +403,7 @@ class MainActivity : Activity() {
                         dialog.dismiss()
                         connectionStatus = "Manual connection settings saved."
                         toast("Configuration saved. Tap Start to enable monitoring.")
+                        applied = null
                         refreshStatus()
                     } catch (cancelled: CancellationException) {
                         throw cancelled
@@ -364,38 +431,73 @@ class MainActivity : Activity() {
         connectAutomatically()
     }
 
-    private data class HomeStatus(val card: String, val detail: String)
+    private data class Snapshot(val plan: HomePlan, val detail: String)
 
     private fun refreshStatus() {
         if (!::statusView.isInitialized || statusJob?.isActive == true) return
         statusJob = activityScope.launch {
             val snapshot = withContext(Dispatchers.IO) { readStatus() }
             if (!visible) return@launch
-            // A running connection check owns the card, so the ticker must not overwrite its text.
-            if (diagnosticJob?.isActive != true) readyView.text = snapshot.card
-            statusView.text = snapshot.detail
+            // A running connection check owns the headline line, so the ticker stands down while it
+            // works; the check re-renders when it finishes. Otherwise the page is redrawn only when a
+            // value really changed, which keeps a screen reader from repeating the same words.
+            if (diagnosticJob?.isActive != true) {
+                if (applied != snapshot.plan) {
+                    render(snapshot.plan)
+                    applied = snapshot.plan
+                }
+            }
+            if (appliedDetail != snapshot.detail) {
+                statusView.text = snapshot.detail
+                appliedDetail = snapshot.detail
+            }
         }
     }
 
-    private fun readStatus(): HomeStatus {
-        val notices = getSystemService(NotificationManager::class.java).areNotificationsEnabled() &&
-            (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED)
+    private fun render(plan: HomePlan) {
+        headline.text = plan.headline
+        subhead.text = plan.subhead
+        attentionCard.replaceLines(plan.alerts)
+        statusCard.replaceFacts(plan.facts)
+        primaryAction = plan.primary
+        primaryButton.visibility = if (plan.primary == null) View.GONE else View.VISIBLE
+        plan.primary?.let { primaryButton.text = it.label }
+        stopMonitoringButton.visibility = if (plan.monitorStopVisible) View.VISIBLE else View.GONE
+        stopSharingButton.visibility = if (plan.sharingStopVisible) View.VISIBLE else View.GONE
+    }
+
+    private fun readStatus(): Snapshot {
+        val notices = notificationsReady()
         val upload = ConnectionDiagnostics.lastUpload(this)
         val verified = ConnectionDiagnostics.verified(this)
         val update = UpdateAwareness.available(this)
-        val card = buildString {
-            append(ReadinessPolicy.title(SyncSettingsStore.hasConfiguration(this@MainActivity), notices, verified, CoreService.isRunning, upload > 0)).append("\n\n")
-            append("Server: ").append(if (verified) "verified recently" else ConnectionDiagnostics.lastCheckMessage(this@MainActivity)).append("\n")
-            append("Status notifications: ").append(if (notices) "allowed" else "enable in guided setup").append("\n")
-            append("Monitoring: ").append(if (CoreService.isRunning) "active" else "stopped").append("\n")
-            append("Last successful upload: ").append(ConnectionDiagnostics.timestamp(upload)).append("\n")
-            append("Pending tool uploads: ").append(FeatureBridge.pendingCount(this@MainActivity))
-            RemotePolicy.summary(this@MainActivity)?.let {
-                append("\n\nDashboard rules on this phone: ").append(it)
-            }
-            if (update != null) append("\n\nUpdate available: version ${update.version} (this phone has ${update.installed}).").append(
-                if (update.url.isNotBlank()) "\n${update.url}" else "\nAsk the dashboard owner for the new APK.")
-        }
+        val plan = HomeOverview.plan(HomeSignals(
+            enrolled = SyncSettingsStore.hasConfiguration(this),
+            notificationsAllowed = notices,
+            serverVerified = verified,
+            monitoring = CoreService.isRunning,
+            everUploaded = upload > 0,
+            lastUploadLabel = ConnectionDiagnostics.timestamp(upload),
+            serverMessage = ConnectionDiagnostics.lastCheckMessage(this),
+            pendingUploads = FeatureBridge.pendingCount(this),
+            unsentItems = FeatureBridge.failedCount(this),
+            pendingRequests = FeatureBridge.pendingRequests(this).size,
+            appTextSharing = getSharedPreferences(ScreenMonitorService.PREFS_NAME, MODE_PRIVATE)
+                .getBoolean(ScreenMonitorService.KEY_ENABLED, false),
+            liveStreaming = LiveStreamBridge.isStreaming(),
+            rulesSummary = RemotePolicy.summary(this),
+            scheduledReports = ReportSchedule.summary(this),
+            updateAvailable = update?.version,
+            updateInstalled = update?.installed ?: BuildConfig.VERSION_NAME,
+            updateUrl = update?.url ?: "",
+            serviceStatus = CoreService.status(this)
+        ))
+        return Snapshot(plan, detail())
+    }
+
+    /** The technical block. It stays available because the person reading a fault out needs the exact
+     * words, but it is no longer the first thing the owner is shown. */
+    private fun detail(): String {
         val specs = listOf(
             ServiceManager.ServiceSpec(ComponentName(this, CoreService::class.java),
                 ServiceManager.Kind.ORDINARY, foreground = true),
@@ -407,15 +509,17 @@ class MainActivity : Activity() {
                 ServiceManager.Kind.NOTIFICATION_LISTENER)
         )
         val manager = ServiceManager(this, specs)
-        val detail = buildString {
-            append("\n${CoreService.status(this@MainActivity)}\n")
+        return buildString {
+            append(CoreService.status(this@MainActivity)).append('\n')
             if (connectionStatus.isNotBlank()) append("$connectionStatus\n")
             append("Sync ready: ${CoreService.isSyncReady}\n")
             val selection = getSharedPreferences(ScreenMonitorService.PREFS_NAME, MODE_PRIVATE)
             append("App selection: ")
-            append(if (selection.getBoolean(ScreenMonitorService.KEY_ALL_APPS, true)) "all supported apps automatically\n" else "chosen apps\n")
+            append(if (selection.getBoolean(ScreenMonitorService.KEY_ALL_APPS, true))
+                "all supported apps automatically\n" else "chosen apps\n")
             append("${FeatureBridge.status}\n")
             append("Tool uploads pending: ${FeatureBridge.pendingCount(this@MainActivity)}\n")
+            append("Unsent items kept aside: ${FeatureBridge.failedCount(this@MainActivity)}\n")
             for (spec in specs) {
                 val state = manager.checkServiceStatus(spec)
                 append("${spec.component.shortClassName.substringAfterLast('.')}: ")
@@ -424,7 +528,6 @@ class MainActivity : Activity() {
                 append('\n')
             }
         }
-        return HomeStatus(card, detail)
     }
 
     override fun onDestroy() {

@@ -318,6 +318,7 @@ class CoreService : Service() {
 
     private fun stopMonitoring() {
         HeadlessCapture.cancel()
+        LiveStreamBridge.cancel()
         acceptedSensorTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_NONE
         stopSync()
         isRunning = false
@@ -348,6 +349,7 @@ class CoreService : Service() {
     override fun onDestroy() {
         if (instance === this) instance = null
         HeadlessCapture.cancel()
+        LiveStreamBridge.cancel()
         stopSync()
         serviceScope.cancel()
         isRunning = false

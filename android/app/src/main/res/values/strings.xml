@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android requires these two to be resource references, not literals in
+     res/xml/accessibility_service_config.xml. They are the only text the owner sees beside the
+     service name in Settings, so they say what the service reads and how to stop it. -->
+<resources>
+    <string name="accessibility_summary">Reads the text on screen for the monitoring you started in System Health.</string>
+    <string name="accessibility_description">This is System Health, not part of Android. While monitoring is on it reads the text of the screen you can see, so the dashboard can show what is happening on this phone. Nothing is sent unless monitoring is running and this switch is on. Turn it off here, or with Stop in the System Health notice.</string>
+</resources>

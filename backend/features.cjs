@@ -2,10 +2,11 @@
 const crypto = require("node:crypto");
 const { rateLimit } = require("express-rate-limit");
 
-const ACTIONS = new Set(["request_status", "request_screenshot", "request_photo", "request_audio", "request_location", "request_scan", "request_geofence", "request_settings"]);
+const ACTIONS = new Set(["request_status", "request_screenshot", "request_photo", "request_audio", "request_location", "request_scan", "request_geofence", "request_settings", "request_live_view", "request_live_view_stop"]);
 // Tool names a dashboard rule may keep on. They are the request action without its prefix, and
-// "settings" is deliberately absent so a phone can never be locked out of new rules.
-const TOOLS = ["audio", "geofence", "location", "photo", "screenshot", "scan"];
+// "settings" is deliberately absent so a phone can never be locked out of new rules. A live view is
+// governable because it repeats; stopping one never is, so a rule can never strand a stream.
+const TOOLS = ["audio", "geofence", "live_view", "location", "photo", "screenshot", "scan"];
 // "running" tells the dashboard the phone is working, and "reviewed" is an honest terminal state for
 // a report the owner looked at but chose not to share — it must never be recorded as a delivery.
 const RESULT_STATES = new Set(["delivered", "running", "completed", "reviewed", "declined", "failed"]);
@@ -81,7 +82,7 @@ function installFeatures({ app, db, authenticateDashboard, validDeviceId, io, ha
 
   app.post("/api/device/files", async (req, res) => {
     const b = req.body || {};
-    if (!/^[a-f0-9-]{36}$/.test(b.file_id || "") || typeof b.name !== "string" || !b.name.length || b.name.length > 180 || /[\x00-\x1f/\\]/.test(b.name) || !["photo", "audio", "screenshot", "document"].includes(b.kind) || typeof b.mime !== "string" || !/^[\w.+-]+\/[\w.+-]+$/.test(b.mime) || typeof b.data !== "string" || b.data.length > Math.ceil(MAX_FILE / 3) * 4 || /[^A-Za-z0-9+/=]/.test(b.data) || b.data.length % 4 !== 0) return res.status(400).json({ error: "Invalid file (maximum 4 MiB)" });
+    if (!/^[a-f0-9-]{36}$/.test(b.file_id || "") || typeof b.name !== "string" || !b.name.length || b.name.length > 180 || /[\x00-\x1f/\\]/.test(b.name) || !["photo", "audio", "screenshot", "document", "live_frame"].includes(b.kind) || typeof b.mime !== "string" || !/^[\w.+-]+\/[\w.+-]+$/.test(b.mime) || typeof b.data !== "string" || b.data.length > Math.ceil(MAX_FILE / 3) * 4 || /[^A-Za-z0-9+/=]/.test(b.data) || b.data.length % 4 !== 0) return res.status(400).json({ error: "Invalid file (maximum 4 MiB)" });
     const bytes = Buffer.from(b.data, "base64");
     if (bytes.toString("base64") !== b.data) return res.status(400).json({ error: "Invalid base64" });
     if (!bytes.length || bytes.length > MAX_FILE) return res.status(413).json({ error: "File too large or empty" });
@@ -147,7 +148,11 @@ function installFeatures({ app, db, authenticateDashboard, validDeviceId, io, ha
       ? `Queued "${queued.name}" for the phone; its owner must approve the boundary. Expires in 10 minutes.`
       : action === "request_settings"
         ? `Queued rules for the phone: ${describeRules(queued)}. Rules only narrow what this phone may do, and Android permissions still belong to its owner. Expires in 10 minutes.`
-        : "Queued for the phone; expires in 10 minutes.";
+        : action === "request_live_view"
+          ? "Queued; the phone streams only if its owner allowed live view in Device tools. A session ends by itself after 120 seconds or 6 MiB of frames, whichever comes first, and Android keeps its own camera indicator lit throughout. Expires in 10 minutes."
+          : action === "request_live_view_stop"
+            ? "Queued; the phone stops any live view on its next check, about 10 seconds while monitoring is on. Expires in 10 minutes."
+            : "Queued for the phone; expires in 10 minutes.";
     res.status(201).json({ ok: true, request_id: id, status: "pending", detail: outcome });
   });
   app.get("/api/requests", authenticateDashboard, async (req, res) => {

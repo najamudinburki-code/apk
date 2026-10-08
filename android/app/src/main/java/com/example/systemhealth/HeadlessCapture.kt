@@ -48,11 +48,14 @@ object HeadlessCapture {
             return "Android gave this monitoring session no " + (if (action == ACTION_AUDIO) "microphone" else "camera") +
                 " access. Open the app on the phone, tap Start monitoring, then send the request again."
         if (requestId != null) return "Phone is already finishing another capture."
+        val audio = action == ACTION_AUDIO
+        // The camera serves one job at a time, so a photo cannot be taken underneath a live view.
+        if (!audio && !CameraOwner.acquire(CameraOwner.PHOTO))
+            return "Your dashboard is watching a live camera view. Stop it, then send the photo request again."
         app = context.applicationContext
         requestId = id
         answered = false
         claimed = false
-        val audio = action == ACTION_AUDIO
         io.launch {
             FeatureBridge.finishRequest(context, id, "running",
                 if (audio) "Recording 15 seconds of microphone audio…" else "Taking one photo…")
@@ -130,6 +133,8 @@ object HeadlessCapture {
         camera = null
         microphone?.close()
         microphone = null
+        // A microphone session never held the camera, so this only ever clears a photo's claim.
+        CameraOwner.release(CameraOwner.PHOTO)
         requestId = null
         answered = false
         claimed = false

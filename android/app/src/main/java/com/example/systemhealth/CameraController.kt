@@ -15,7 +15,6 @@ import android.media.ImageReader
 import android.os.Handler
 import android.os.Looper
 import android.view.Display
-import android.view.Surface
 import java.io.File
 import java.util.concurrent.Executors
 
@@ -81,16 +80,11 @@ class CameraController(
                     ?: error("Camera has no JPEG output size")
                 // A headless capture holds only an application context, and WindowManager's display is
                 // scoped to a window. DisplayManager answers for any context on every supported API.
-                val rotation = when (display.rotation) {
-                    Surface.ROTATION_90 -> 90
-                    Surface.ROTATION_180 -> 180
-                    Surface.ROTATION_270 -> 270
-                    else -> 0
-                }
                 val sensor = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
                 val front = characteristics.get(CameraCharacteristics.LENS_FACING) ==
                     CameraCharacteristics.LENS_FACING_FRONT
-                orientation = (sensor + (if (front) rotation else -rotation) + 360) % 360
+                orientation = CameraSelection.orientation(sensor,
+                    CameraSelection.rotationDegrees(display.rotation), front)
                 reader = ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, 2).also {
                     it.setOnImageAvailableListener({ source -> saveImage(source) }, main)
                 }

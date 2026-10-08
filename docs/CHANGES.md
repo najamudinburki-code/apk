@@ -170,3 +170,149 @@ left half-removed.
 - **Still there, deliberately.** "Choose / browse a folder" and "View / export / delete local files",
   because those serve the folder vault rather than the removed picker. No consent control, activity
   notice or Stop path changed.
+
+## Live camera view — 8 October 2026 (source only, never run on a handset)
+
+The dashboard can now ask for a short continuous preview instead of one photo. The request that came
+in with the feature brief proposed a WebSocket or an HTTP chunked response; that transport was
+declined, because this app has exactly one upload path — the phone's file outbox, which is what makes
+"completed" mean *the server has this byte* rather than *a socket accepted a write* — and a second
+channel would need its own retry rules, its own queue the owner cannot read, and its own idea of
+delivery. Frames therefore leave as ordinary `image/jpeg` uploads of kind `live_frame`.
+
+- **Android.** Five files added: `LiveViewPolicy` (the whole budget in one testable place: 500 ms
+  cadence, 120 s, 6 MiB, one buffered frame, quality 40, preview capped at VGA), `CameraOwner` (one
+  token, because the lens serves one job and a photo and a stream must not both open it),
+  `FrameProducer` (reads `YUV_420_888`, packs NV21 honouring each plane's row and pixel padding,
+  compresses with `YuvImage`, turns the frame by the sensor-plus-display orientation),
+  `LiveCameraController` (camera open, one repeating `TEMPLATE_PREVIEW`, its own `HandlerThread`,
+  never the main looper), and `LiveStreamBridge` (the session: gates, the queue hand-off, the answers,
+  the self-stop). `CameraSelection` gained the two pure rotation helpers `CameraController` now shares.
+- **Why not the reference code as written.** It asked Android for a `JPEG` `ImageReader` and drove it
+  with `setRepeatingRequest`, but a JPEG surface is only valid for a still-capture request, so the
+  preview would never configure; it read `planes[0]` alone, which is the luma plane and not a JPEG;
+  it used `imageReader!!` (forbidden here) and `CONTROL_MODE_VIDEO`; it hardcoded 640×480 without
+  asking the device which sizes it lists; it cancelled a process-level `CoroutineScope`, which cannot
+  be restarted, so a second live view after a stop would have been dead; and it had no permission
+  check, no rotation, no byte or time limit and no owner consent. Each is replaced above.
+- **Consent.** A stream is not covered by the agreement a single photo gets, so live view needs a new
+  tools-screen switch that is **off until the owner turns it on**, and that screen also carries a Stop
+  button. The monitoring notice names the stream while it runs, `live_view_started` and
+  `live_view_stopped` events carry the frame/byte/skip counts, and Android's own camera indicator is
+  untouched. `live_view` is a governable tool, so a dashboard rule can keep it off; the stop command is
+  deliberately outside the governed list, so no rule can strand a stream. A request is only answered
+  `completed` once a frame really reached the server.
+- **Queueing.** While a session runs, photo and microphone requests stay queued on the server instead
+  of failing against a busy lens, and a queue that fills can shed a stale `live_frame` but never a
+  capture the owner asked for.
+- **Backend / dashboard.** `request_live_view` and `request_live_view_stop` are accepted actions,
+  `live_view` joins the rule whitelist, `live_frame` joins the upload kinds (still 4 MiB and still the
+  same quotas), and the Requests and Files panels say what a stream costs.
+- **Checked.** `:app:testDevUnitTest` 93 checks pass with zero failures (24 of them new:
+  `LiveViewPolicyTest`, `CameraOwnerTest`, rotation maths, the two router modes, frame shedding),
+  `:app:compileDevKotlin`, `:app:assembleDev` and `:app:lintDev` (0 errors) pass, backend `npm test`
+  40 pass, and the dashboard builds. A review pass then found three real defects, all fixed and
+  rebuilt: the limits were only measured when a frame arrived, so a camera that went quiet after one
+  frame would have kept the lens and refused every later stream; the start/end alerts and the notice
+  refresh sat outside the throw-safe queue, so a failing notification could strand an open camera; and
+  one flag served both "which frame answers the request" and "the request has been answered", which
+  could answer a request twice. **Nothing here has opened a camera on a real phone**, so frame
+  legibility, orientation, the indicator, the notice, the refusal paths, the stall deadline and the
+  120-second self-stop are all unconfirmed.
+
+## Interface rebuild — 8 October 2026 (source and build checks only, no handset)
+
+A senior-designer pass over the three screens, asked for as "easier navigation, clearer information,
+fewer confusing steps", with every existing feature kept. `docs/UI-BEFORE-AFTER.md` is the row-by-row
+before/after map; nothing below changed a route, a request action, a preference key or a device identity.
+
+- **Why the screens were hard to use.** The home screen was a stack of eight equally-sized buttons over a
+  wall of diagnostic text, so "what do I do now" had no answer. Device tools was one long flat list of
+  20-odd controls whose names assumed the reader already knew the tool. Setup listed Android permissions
+  without saying why each one was being asked for, and said nothing useful when the owner declined.
+- **One kit, no new dependency.** All three screens are now built from `ScreenKit.kt` (cards, labelled
+  state rows, button weights PRIMARY/PLAIN/QUIET/STOP, switches that carry their own explanation,
+  dropdowns, a search box and foldable sections) and `values/themes.xml` + `values-night/themes.xml`,
+  which point the app at the phone maker's own `Theme.DeviceDefault` in light and dark. Still zero XML
+  layouts, still no AppCompat, Material or Compose, and the same three dependencies. Colours are resolved
+  from theme attributes, so a card, a filled button and an alert line read correctly in either mode;
+  spacing scales with the owner's font size (clamped, so huge text cannot push controls off the page) and
+  every control is at least 48 dp tall.
+- **The decisions live in plain objects, so they can be tested.** `HomeOverview` turns what the phone
+  knows into a headline, one primary action, an alert list and labelled facts; `ToolCatalog` names every
+  tool, its one-line explanation, its category and the words that find it; `PlainStatus` holds the
+  sentences for request states, refusals, permission reasons and counts. None of the three touches
+  Android, so all three are checked on the JVM.
+- **Home screen.** Answers the five questions in order, offers exactly one primary button for the state
+  it read, and keeps both Stop controls on that first card whenever there is something to stop. Diagnostics
+  moved into **Show details and diagnostics** and keep their exact wording for reading out loud — but any
+  line the service wrote that is not one of the four known-calm states is promoted into **Needs your
+  attention**, so an error is never buried in a fold. The 2-second refresh now redraws only when a value
+  actually changed, which is what stops TalkBack re-announcing the same sentence while it is being read.
+- **Device tools.** Seven purpose-grouped cards plus a search box that narrows by ordinary words. A search
+  can never hide a Stop control or a state row, because those are tagged to stay visible and an untitled
+  card cannot be filtered away. Every file row now says **received by the server** or **waiting to
+  upload**, and a locally saved capture is described as saved on the phone, never as uploaded.
+- **Setup.** Same three resumable steps, now with a **Your progress** card marking each step Done / You
+  are here / Up next, a reason line under every permission switch saying what needs it and what stays off
+  without it, a **What this phone allows today** list, an alert card that explains a refusal and links to
+  the Android page that changes it, and a final step that reports what Android and the server confirm
+  rather than claiming success because a button was pressed.
+- **Preserved deliberately.** Enrollment and the manual connection dialog, every permission choice, the
+  consent dialogs and their exact disclosures, Start/Stop and the required activity notices, all request
+  handling and the `pending → delivered → running → completed/reviewed/declined/failed/expired` states,
+  the dashboard-rule semantics, the single HTTP outbox, and all saved settings and device identity. No
+  permission was added, no framework swapped, and nothing was made quieter that Android itself shows.
+- **Checked.** `:app:testDevUnitTest` → 127 checks, 0 failures (34 new: `HomeOverviewTest` 13,
+  `ToolCatalogTest` 11, `PlainStatusTest` 10); `:app:assembleDev` → `app-dev.apk`; `:app:lintDev` → 0
+  errors, 82 warnings, all pre-existing categories. The build itself caught four mistakes in the new code,
+  each fixed before this record: a nested data class declared inside an inner class, `DisplayMetrics.fontScale`
+  (the font scale lives on `Configuration`), `android.R.attr.colorSurface` (no such framework attribute, so
+  the card fill resolves `colorBackground` and falls back to a measured surface), and
+  `NotificationManagerCompat.getEnabledListenerPackages()`, which wants a `Context` rather than the package
+  name the previous line was passing. **No phone or emulator was attached**, so light/dark appearance,
+  large-font layout, contrast, TalkBack order, the refusal path, rotation resume and every capture path are
+  unconfirmed; this is a `dev`-variant debug build, not a release artifact.
+
+## Interface rebuild on the handset — 8 October 2026, evening
+
+The same build was then driven on the owner's TECNO Camon 20 (Android 14) over wireless ADB against the
+local backend, and that is what the paragraph above could not substitute for. Nine defects showed up on the
+handset and none of them were visible from a compiler, a test runner or a lint report:
+
+- **The theme lied about its own colours.** This ROM's dark `colorPrimary` equals its window background, so
+  the primary button painted invisible; `colorError` in light is `#FF5722`, which measures 2.4–2.8:1 as text.
+  `ScreenKit` now resolves the first accent that is actually distinguishable from the page and darkens alert
+  words until they reach 4.5:1, instead of trusting framework attributes.
+- **A `RippleDrawable` with a null mask never paints its content here** — the button stayed the colour of the
+  card. Filled buttons are now a `StateListDrawable` of rounded fills with a darker pressed state.
+- **A search box emptied the whole tools screen.** A card-level flag hid everything the moment the box had
+  text. A card now leaves the page only when nothing inside it survives, and the way out is pinned:
+  `Back to monitoring` carries `staysVisible = true`, as every Stop control already did.
+- **Two strings were cut off and one contradicted itself.** The search hint ellipsized even after being
+  shortened once, so it is now just `Search tools`; `Not confirmed: Server accepted this phone` quoted a
+  stale success as the present state and reads `Not confirmed. Last report said: …`; and `Nothing waiting to
+  upload` was drawn in the alarm colour unconditionally, which is now tied to the queue being full.
+- **`(s)` placeholders were being shown to the owner** (`8 item(s)`, `2 request(s)`, `4 frame(s)`,
+  `3 upload(s)`). One tested helper, `PlainStatus.count`, covers all six sites, and `HomeOverview` reuses
+  `PlainStatus.unsent` rather than repeating that sentence.
+
+- **The home screen nagged about a server that was answering it.** `ConnectionDiagnostics.verified()` only
+  trusted a manual probe and only for two minutes, while an acknowledged upload wrote a separate key nothing
+  read. A phone receiving samples every five minutes therefore still said `Connected to your dashboard →
+  Not confirmed` with a "check again" button, which is a false alarm on the one screen whose job is to be
+  trusted. A delivery now proves the connection for three sample periods with a 15-minute floor
+  (`deliveryWindowMs`), covered by the new `ConnectionDiagnosticsTest`.
+
+What the phone confirmed rather than revealed: deliveries advancing on their own with server-acknowledged
+timestamps, the eight genuinely unsent items still reported as unsent, and — after the reinstall killed the
+service — a home screen that said **Ready — monitoring stopped** instead of claiming a session it no longer
+had. The home screen was photographed in light and dark at normal and 1.3× text, and Device tools in dark at
+both sizes — its light capture at enlarged text, and every guided-setup screen, still await the owner's
+finger. Re-measured after the
+fixes: `assembleDev` and `testDevUnitTest` → 129 checks across 19 classes, 0 failures, 0 errors; `lintDev`
+was last run before the tenth fix (0 errors, 82 warnings) and has not been re-run since, because a Gradle
+build on this laptop is heavy enough to make the phone's probes time out. **Guided setup is still unseen on a handset** (it
+is not exported and no scripted tap was attempted) and **TalkBack was never run**, so the reading order
+remains designed rather than tested; `START-HERE.md` and `docs/UI-BEFORE-AFTER.md` now say so plainly where
+they previously implied otherwise. This remains a debug build against a laptop, not a release artifact.

@@ -3,12 +3,12 @@ import { MapContainer, TileLayer, CircleMarker, Popup } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import { SERVER_URL } from "../socket";
 
-const names = { request_status: "Phone status", request_screenshot: "Screenshot", request_photo: "Photo", request_audio: "15-second audio", request_location: "Start location", request_scan: "Nearby scan", request_geofence: "Add a geofence", request_settings: "Phone rules" };
+const names = { request_status: "Phone status", request_screenshot: "Screenshot", request_photo: "Photo", request_audio: "15-second audio", request_location: "Start location", request_scan: "Nearby scan", request_geofence: "Add a geofence", request_settings: "Phone rules", request_live_view: "Live camera view", request_live_view_stop: "Stop live camera view" };
 // Two tools carry values, so they are sent from their own forms instead of a one-tap button.
 const valued = ["request_geofence", "request_settings"];
 const quickActions = Object.keys(names).filter(action => !valued.includes(action));
 // These names are the request action without its prefix, and must match the backend's rule list.
-const toolNames = { photo: "Photo", audio: "Microphone clip", screenshot: "Screenshot", location: "Location and boundaries", scan: "Nearby scan", geofence: "Add a boundary" };
+const toolNames = { photo: "Photo", audio: "Microphone clip", screenshot: "Screenshot", location: "Location and boundaries", scan: "Nearby scan", geofence: "Add a boundary", live_view: "Live camera view" };
 const ruleTools = Object.keys(toolNames);
 const fromReported = rules => ({
   interval: String(rules.health_interval_minutes ?? 5),
@@ -209,13 +209,13 @@ export default function FeaturePanels({ token, devices, events, api, featuresRef
       <h4 className="font-medium">Geofence events</h4>{fences.length ? fences.map(e => <pre key={e.event_id} className="overflow-auto text-sm">{JSON.stringify(e.payload, null, 2)}</pre>) : <p className="text-sm text-slate-400">No boundary events received yet.</p>}
     </div>}
     {tab === "Files" && <div className={panel}>
-      <h3 className="font-semibold">Uploaded files</h3><p className="text-sm text-slate-400">Photos, screenshots, microphone clips and explicitly chosen documents appear here after upload. Limits: 4 MiB/file, 100 MiB and 500 files/phone. Uploads are deleted with the rest of the history after RETENTION_DAYS (30 by default).</p>
+      <h3 className="font-semibold">Uploaded files</h3><p className="text-sm text-slate-400">Photos, screenshots, microphone clips and explicitly chosen documents appear here after upload. A live camera view arrives as ordinary JPEG frames with the kind "live_frame" — about two a second for at most 120 seconds or 6 MiB per session, then the phone stops by itself. Limits: 4 MiB/file, 100 MiB and 500 files/phone. Uploads are deleted with the rest of the history after RETENTION_DAYS (30 by default).</p>
       <button className="secondary" onClick={() => setRefresh(n => n + 1)}>Refresh files</button>
       <div className="grid gap-4 md:grid-cols-2">{files.map(f => <SharedFile key={f.file_id} file={f} token={token} remove={remove} />)}</div>{!files.length && <p>No uploaded files yet. Capture or select a file on the phone.</p>}
     </div>}
     {tab === "Requests" && <div className={panel}>
       <h3 className="font-semibold">Ask the phone to run a tool</h3>
-      <p className="text-sm text-slate-400">Requests expire after 10 minutes. While monitoring is on the phone checks for new work about every 10 seconds, so “pending” becomes “delivered” quickly. Photo and microphone requests are captured in the background and never open the phone’s screen, though Android still shows its own camera and microphone indicator; start monitoring from the phone itself, because Android allows a windowless capture only for a session begun on screen. Screenshots and a new boundary need Android permission and a visible screen on the phone, where the owner approves each one; the rest run silently. “Running” means the phone started it, and “completed” means the output reached this server — the record is linked below the request. “Reviewed” appears on requests from an older phone build whose report the owner read but did not upload. A request for a tool your own rules turned off comes back declined with the rule named.</p>
+      <p className="text-sm text-slate-400">Requests expire after 10 minutes. While monitoring is on the phone checks for new work about every 10 seconds, so “pending” becomes “delivered” quickly. Photo and microphone requests are captured in the background and never open the phone’s screen, though Android still shows its own camera and microphone indicator; start monitoring from the phone itself, because Android allows a windowless capture only for a session begun on screen. Screenshots and a new boundary need Android permission and a visible screen on the phone, where the owner approves each one; the rest run silently. “Running” means the phone started it, and “completed” means the output reached this server — the record is linked below the request. “Reviewed” appears on requests from an older phone build whose report the owner read but did not upload. A request for a tool your own rules turned off comes back declined with the rule named. A live camera view runs only on a phone whose owner allowed it in Device tools: it streams about two small frames a second for at most 120 seconds or 6 MiB, then stops by itself, and “Stop live camera view” ends it early even when your rules keep the tool off.</p>
       <div className="flex flex-wrap gap-2">{quickActions.map(action => <button className="secondary" key={action} disabled={!device} onClick={() => send(action)}>{names[action]}</button>)}</div>
       {requests.map(r => {
         const statusMessage = r.detail || {

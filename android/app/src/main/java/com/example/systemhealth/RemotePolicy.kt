@@ -12,8 +12,11 @@ internal data class PhoneRules(val intervalMinutes: Int?, val toolsAllowed: Set<
  *  start monitoring or hide the stop control. */
 internal object RemotePolicy {
     const val DEFAULT_HEALTH_INTERVAL_MINUTES = 5
+    // Names a dashboard rule may keep on, matching the backend's list. A live view is governable
+    // because it is the one camera tool that repeats; stopping one is not, so a narrowed phone can
+    // always be released from a stream by the same dashboard that started it.
     val tools: Set<String> =
-        setOf("photo", "audio", "screenshot", "location", "scan", "geofence")
+        setOf("photo", "audio", "screenshot", "location", "scan", "geofence", "live_view")
     private const val PREFS = "remote_policy"
     private const val KEY_INTERVAL = "health_interval_minutes"
     private const val KEY_TOOLS = "tools_allowed"

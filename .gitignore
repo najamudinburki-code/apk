@@ -15,5 +15,10 @@ backend/dev-data/
 *.jks
 *.keystore
 keystore.properties
+*.pem
+*.p12
+*.key
 *.apk
 *.aab
+# Kotlin/Gradle daemon crash dumps, which are build output and were committed by accident once
+replay_pid*.log

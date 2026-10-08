@@ -32,6 +32,11 @@ class TransientProximityState : ProximityState {
  * One string set under one key. Nothing here is sensitive enough for the encrypted store: it holds
  * the owner's own names for places ("home"), never the coordinates, and uninstalling the app removes
  * it along with everything else.
+ *
+ * [SharedPreferences] itself is safe to use from several threads, and each call here makes its own
+ * [SharedPreferences.Editor], so no state is shared between them. What is not atomic is the
+ * read-modify-write of the boundary set, and that belongs to [ProximityWatch], which holds it under
+ * one lock. The store is stateless by design: two instances reading the same file see the same thing.
  */
 class ProximityStateStore(context: Context) : ProximityState {
 
@@ -41,7 +46,11 @@ class ProximityStateStore(context: Context) : ProximityState {
     /** Copied out, because Android returns the live set and lets callers corrupt it by mutating it. */
     override fun load(): Set<String> = prefs.getStringSet(KEY_INSIDE, emptySet()).orEmpty().toSet()
 
-    /** `apply()` writes asynchronously on a background thread, so a per-fix save never blocks the fix. */
+    /** `apply()` rather than `commit()`: the caller is the location listener on the main looper, and a
+     * synchronous disk write there is an ANR waiting to happen under storage pressure. The cost is that
+     * a process killed within milliseconds of a crossing can lose it — which re-reports one arrival on
+     * the next start. It cannot swallow one, so the failure mode leans towards telling the owner more,
+     * not less. */
     override fun save(inside: Set<String>) {
         prefs.edit().putStringSet(KEY_INSIDE, inside.toSet()).apply()
     }
